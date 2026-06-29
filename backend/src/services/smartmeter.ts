@@ -14,16 +14,24 @@ async function getJwt(apiKey: string): Promise<string> {
   return jwt;
 }
 
+const REQUEST_TIMEOUT_MS = 20_000;
+
+function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  return fetch(url, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 async function smGet<T>(apiKey: string, path: string): Promise<T> {
   const jwt = await getJwt(apiKey);
-  const res = await fetch(`${BASE}${path}`, { headers: { Authorization: `Bearer ${jwt}` } });
+  const res = await fetchWithTimeout(`${BASE}${path}`, { headers: { Authorization: `Bearer ${jwt}` } });
   if (!res.ok) throw new Error(`SmartMeter ${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }
 
 async function smPost<T>(apiKey: string, path: string, body: object): Promise<T> {
   const jwt = await getJwt(apiKey);
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetchWithTimeout(`${BASE}${path}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -83,10 +91,24 @@ function hasCpt(record: BillingRecord, ...codes: string[]) {
   return record.cpt_codes?.some((c) => codes.includes(c.cpt_code)) ?? false;
 }
 
-async function fetchPatientCount(apiKey: string): Promise<number> {
+async function withRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[smartmeter] "${label}" failed, retrying in 5s… (${msg})`);
+    await new Promise((r) => setTimeout(r, 5000));
+    return fn();
+  }
+}
+
+async function fetchPatientCount(apiKey: string, clinicName: string): Promise<number> {
   let page = 1, total = 0;
   while (true) {
-    const res = await smGet<{ data: unknown[] }>(apiKey, `/api/patients?page=${page}&size=100`);
+    const res = await withRetry(
+      () => smGet<{ data: unknown[] }>(apiKey, `/api/patients?page=${page}&size=100`),
+      `${clinicName} patients p${page}`,
+    );
     const count = res.data?.length ?? 0;
     total += count;
     if (count < 100) break;
@@ -132,12 +154,21 @@ async function fetchClinic(name: string, apiKey: string): Promise<ClinicRaw> {
   const { start, end } = billingRange();
 
   const [patientsRes, readingsRes, alertsRes, billingRes, worklistRes] = await Promise.allSettled([
-    fetchPatientCount(apiKey),
+    fetchPatientCount(apiKey, name),
     fetchReadingsCompliance(apiKey),
     smGet<AlertListResp>(apiKey, "/api/patients/alerts/group?alert_status=unread&page=1&size=1000"),
     smGet<BillingResp>(apiKey, `/api/patients/billing?start_date=${start}&end_date=${end}`),
     smGet<WorklistResp>(apiKey, "/api/worklist/get-worklist?Status=OPEN&page=1&size=1"),
   ]);
+
+  // Log any per-endpoint failures so we can diagnose which API call is flaky
+  const endpoints = ["patients", "readings", "alerts", "billing", "worklist"];
+  [patientsRes, readingsRes, alertsRes, billingRes, worklistRes].forEach((r, i) => {
+    if (r.status === "rejected") {
+      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      console.warn(`[smartmeter] "${name}" ${endpoints[i]} failed: ${msg}`);
+    }
+  });
 
   const totalPatients  = patientsRes.status === "fulfilled"  ? patientsRes.value : 0;
   const compliant16    = readingsRes.status === "fulfilled"  ? readingsRes.value  : 0;
@@ -198,15 +229,23 @@ export async function getSmartMeterSummary(
   }
 
   const results = await Promise.allSettled(
-    clinics.map((c) => fetchClinic(c.name, c.apiKey)),
+    clinics.map((c) => withRetry(() => fetchClinic(c.name, c.apiKey), c.name)),
   );
 
   const ok = results
     .filter((r): r is PromiseFulfilledResult<ClinicRaw> => r.status === "fulfilled")
     .map((r) => r.value);
 
-  const failed = results.filter((r) => r.status === "rejected").length;
-  if (failed > 0) console.warn(`SmartMeter: ${failed}/${clinics.length} clinics failed`);
+  const failedResults = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failedResults.length > 0) {
+    console.warn(`[smartmeter] ${failedResults.length}/${clinics.length} clinics failed after retry:`);
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        console.warn(`  · ${clinics[i].name}: ${msg}`);
+      }
+    });
+  }
 
   const totalPatients   = ok.reduce((s, c) => s + c.totalPatients, 0);
   const totalCompliant16 = ok.reduce((s, c) => s + c.compliant16,  0);

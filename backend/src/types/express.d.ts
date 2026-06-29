@@ -10,4 +10,7 @@ declare global {
   }
 }
 
+// express-async-errors patches Express internals and has no own exports
+declare module "express-async-errors";
+
 export {};

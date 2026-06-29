@@ -1,5 +1,10 @@
+import "express-async-errors"; // must be first — patches Express to forward async throws to the error handler
 import cors from "cors";
-import express from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
+import { startCron } from "./lib/cron";
+import fs from "fs";
+import path from "path";
+import rateLimit from "express-rate-limit";
 import { env } from "./env";
 import { renderAcceptInvitePage } from "./pages/accept-invite";
 import { adminRouter } from "./routes/admin.routes";
@@ -13,6 +18,29 @@ const app = express();
 app.use(cors({ origin: env.CORS_ORIGIN }));
 app.use(express.json());
 
+// Strict limit on auth endpoints to prevent brute-force attacks
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Too many attempts. Please try again in 15 minutes." },
+  skipSuccessfulRequests: true,
+});
+
+// General limit on all API traffic
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please slow down." },
+});
+
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/refresh", authLimiter);
+app.use("/api", apiLimiter);
+
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/accept-invite", (_req, res) => res.type("html").send(renderAcceptInvitePage()));
 
@@ -22,8 +50,32 @@ app.use("/api/clinics", clinicsRouter);
 app.use("/api/alerts", alertsRouter);
 app.use("/api/dashboard", dashboardRouter);
 
-app.use((_req, res) => res.status(404).json({ error: "Not found." }));
+// Unknown /api/* routes → JSON 404
+app.use("/api", (_req, res) => res.status(404).json({ error: "Not found." }));
+
+// Serve the built Expo web app (output of `npm run build:frontend`).
+// Any non-API path falls back to index.html so client-side routing works.
+const staticDir = process.env.STATIC_DIR ?? path.resolve(process.cwd(), "../frontend/dist");
+if (fs.existsSync(staticDir)) {
+  app.use(express.static(staticDir));
+  app.get("*", (_req, res) => res.sendFile(path.join(staticDir, "index.html")));
+} else {
+  app.get("/", (_req, res) =>
+    res.type("html").send(
+      `<h2 style="font-family:sans-serif;padding:2rem">RPMCares API is running.<br>
+       <small>No frontend build found. Run <code>npm run build:full</code> to serve the UI here.</small></h2>`
+    )
+  );
+}
+
+// Global error handler — catches any unhandled throw from async route handlers
+app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  console.error("Unhandled error:", err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: "Internal server error." });
+});
 
 app.listen(env.PORT, () => {
   console.log(`RPMCares backend listening on port ${env.PORT}`);
+  startCron();
 });

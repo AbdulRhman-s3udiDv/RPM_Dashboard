@@ -1,7 +1,7 @@
 ﻿import type { Request, Response } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase";
-import { createClinic, deleteClinic, listClinics } from "../models/clinic";
+import { createClinic, deleteClinic, listClinics, updateClinic } from "../models/clinic";
 import { getSmartMeterSummary } from "../services/smartmeter";
 
 const createClinicSchema = z.object({ name: z.string().min(1) });
@@ -16,6 +16,23 @@ export async function postClinic(req: Request, res: Response) {
   if (!parsed.success) return res.status(400).json({ error: "A clinic name is required." });
   const clinic = await createClinic(parsed.data.name);
   return res.status(201).json({ clinic });
+}
+
+const patchClinicSchema = z.object({
+  smartmeter_api_key: z.string().min(1).optional(),
+  specialty: z.string().optional(),
+  location: z.string().optional(),
+});
+
+export async function patchClinicHandler(req: Request, res: Response) {
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: "Clinic ID is required." });
+  const parsed = patchClinicSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid patch fields." });
+  if (Object.keys(parsed.data).length === 0)
+    return res.status(400).json({ error: "No fields to update." });
+  const clinic = await updateClinic(id, parsed.data);
+  return res.json({ clinic });
 }
 
 export async function deleteClinicHandler(req: Request, res: Response) {

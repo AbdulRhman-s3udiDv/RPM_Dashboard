@@ -3,6 +3,30 @@ import { z } from "zod";
 import { supabaseAdmin, supabaseAnon } from "../lib/supabase";
 import { findProfileById, type ProfileRecord } from "../models/profile";
 
+export async function refreshToken(req: Request, res: Response) {
+  const { refreshToken: rt } = req.body;
+  if (!rt || typeof rt !== "string") {
+    return res.status(400).json({ error: "refreshToken is required." });
+  }
+
+  const { data, error } = await supabaseAnon.auth.refreshSession({ refresh_token: rt });
+  if (error || !data.session || !data.user) {
+    return res.status(401).json({ error: "Invalid or expired refresh token." });
+  }
+
+  const profile = await findProfileById(data.user.id);
+  if (!profile) {
+    return res.status(403).json({ error: "This account has no RPMCares profile yet." });
+  }
+
+  return res.json({
+    token: data.session.access_token,
+    refreshToken: data.session.refresh_token,
+    expiresAt: data.session.expires_at,
+    user: toPublicUser(profile),
+  });
+}
+
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),

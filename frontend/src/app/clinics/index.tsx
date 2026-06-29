@@ -1,6 +1,6 @@
 import {
   Building2, Plus, X, UserPlus, MapPin, Stethoscope,
-  Users, Bell, ShieldCheck, Trash2, Mail, ChevronRight,
+  Users, Bell, ShieldCheck, Trash2, Mail, ChevronRight, Key, CheckCircle2,
 } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import {
@@ -239,6 +239,7 @@ export default function ClinicsScreen() {
         onInvite={() => selected && openInvite(selected.id)}
         onMemberRemoved={() => { setSelected(null); loadBase(); }}
         onDeleted={() => { setSelected(null); loadBase(); }}
+        onUpdated={() => loadBase()}
         isSuperAdmin={isSuperAdmin}
         session={session}
       />
@@ -258,7 +259,7 @@ export default function ClinicsScreen() {
 
 // ── Clinic Detail Bottom Sheet ────────────────────────────────────────────
 function ClinicDetailSheet({
-  clinic, members, onClose, onInvite, onMemberRemoved, onDeleted, isSuperAdmin, session,
+  clinic, members, onClose, onInvite, onMemberRemoved, onDeleted, onUpdated, isSuperAdmin, session,
 }: {
   clinic: EnrichedClinic | null;
   members: Member[];
@@ -266,10 +267,31 @@ function ClinicDetailSheet({
   onInvite: () => void;
   onMemberRemoved: () => void;
   onDeleted: () => void;
+  onUpdated: () => void;
   isSuperAdmin: boolean;
   session: { token: string } | null;
 }) {
   const colors = useTheme();
+  const [apiKey, setApiKey] = useState('');
+  const [savingKey, setSavingKey] = useState(false);
+  const [keySaved, setKeySaved] = useState(false);
+
+  useEffect(() => { if (clinic) { setApiKey(''); setKeySaved(false); } }, [clinic?.id]);
+
+  const handleSaveKey = async () => {
+    if (!session || !clinic || !apiKey.trim()) return;
+    setSavingKey(true);
+    try {
+      await api.patchClinic(session.token, clinic.id, { smartmeter_api_key: apiKey.trim() });
+      setApiKey('');
+      setKeySaved(true);
+      onUpdated();
+    } catch (err) {
+      Alert.alert('Error', err instanceof ApiError ? err.message : 'Could not save API key.');
+    } finally {
+      setSavingKey(false);
+    }
+  };
 
   const handleRemove = (member: Member) => {
     if (!session) return;
@@ -353,6 +375,38 @@ function ClinicDetailSheet({
                   <Text style={[styles.sheetStatLabel, { color: colors.textSecondary }]}>{label}</Text>
                 </View>
               ))}
+            </View>
+          )}
+
+          {/* SmartMeter API Key (super_admin only) */}
+          {isSuperAdmin && (
+            <View style={[styles.apiKeySection, { borderColor: colors.border, backgroundColor: colors.surface2 }]}>
+              <View style={styles.apiKeyHeader}>
+                <Key size={14} color={colors.primary} />
+                <Text style={[styles.apiKeyTitle, { color: colors.text }]}>SmartMeter API Key</Text>
+                {(clinic?.hasSmartMeterKey || keySaved) && (
+                  <View style={[styles.keyBadge, { backgroundColor: colors.success + '20' }]}>
+                    <CheckCircle2 size={11} color={colors.success} />
+                    <Text style={[styles.keyBadgeText, { color: colors.success }]}>Connected</Text>
+                  </View>
+                )}
+              </View>
+              <TextInput
+                value={apiKey}
+                onChangeText={setApiKey}
+                placeholder={clinic?.hasSmartMeterKey ? 'Enter new key to replace…' : 'Paste SmartMeter API key…'}
+                placeholderTextColor={colors.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry={false}
+                style={[styles.apiKeyInput, { borderColor: colors.border, color: colors.text }]}
+              />
+              <Pressable
+                onPress={handleSaveKey}
+                disabled={savingKey || !apiKey.trim()}
+                style={[styles.apiKeySave, { backgroundColor: colors.primary, opacity: (savingKey || !apiKey.trim()) ? 0.45 : 1 }]}>
+                <Text style={styles.apiKeySaveText}>{savingKey ? 'Saving…' : 'Save key'}</Text>
+              </Pressable>
             </View>
           )}
 
@@ -620,4 +674,14 @@ const styles = StyleSheet.create({
   submitBtn: { height: 46, borderRadius: 999, alignItems: 'center', justifyContent: 'center', marginTop: 22 },
   deleteClinicBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 16, paddingVertical: 12, borderRadius: 10, borderWidth: 1 },
   deleteClinicText: { fontSize: 13.5, fontWeight: '700' },
+
+  // API key section
+  apiKeySection: { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, padding: 14, marginBottom: 16, gap: 10 },
+  apiKeyHeader: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  apiKeyTitle: { fontSize: 13, fontWeight: '700', flex: 1 },
+  keyBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
+  keyBadgeText: { fontSize: 10.5, fontWeight: '700' },
+  apiKeyInput: { height: 40, borderWidth: StyleSheet.hairlineWidth, borderRadius: 9, paddingHorizontal: 11, fontSize: 13.5 },
+  apiKeySave: { height: 36, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
+  apiKeySaveText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 });

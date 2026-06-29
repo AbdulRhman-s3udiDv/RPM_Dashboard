@@ -16,9 +16,13 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
   CORS_ORIGIN: z.string().default("*"),
   INGEST_SECRET: z.string().min(8).default("change-me-in-prod"),
-  // Tenovi Hardware Integration API
+  // Tenovi Hardware Integration API (HWI — device/gateway counts)
   TENOVI_API_KEY: z.string().optional(),
   TENOVI_CLIENT_DOMAIN: z.string().optional(),
+  // Tenovi RPM Clinical API (patient data — TOTP login)
+  TENOVI_USERNAME: z.string().optional(),
+  TENOVI_PASSWORD: z.string().optional(),
+  TENOVI_TOTP_SECRET: z.string().optional(),
   // SmartMeter RPM API
   SMARTMETER_API_KEY: z.string().optional(),
   SMARTMETER_BASE_URL: z.string().url().default("https://api.smartmeterrpm.com"),

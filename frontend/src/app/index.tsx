@@ -18,12 +18,13 @@ import { ROLE_META, useRole } from '@/contexts/role-context';
 import { useTheme } from '@/hooks/use-theme';
 import {
   api, ApiError,
-  type DashboardSummary, type SmartMeterAlert, type ClinicBreakdownItem,
+  type DashboardSummary, type SmartMeterAlert, type ClinicBreakdownItem, type TenoviSummary,
 } from '@/lib/api';
 
 function fmtRelative(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60_000);
+  if (mins < 2) return 'just now';
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
@@ -59,7 +60,8 @@ export default function Dashboard() {
   }, [token]);
 
   const sm  = summary?.smartmeter;
-  const ten = summary?.tenovi;
+  const ten = summary?.tenovi as TenoviSummary | null | undefined;
+  const cachedAt = summary?.cachedAt;
 
   const topAlerts: SmartMeterAlert[]           = sm?.topAlerts      ?? [];
   const clinicBreakdown: ClinicBreakdownItem[] = sm?.clinicBreakdown ?? [];
@@ -92,7 +94,7 @@ export default function Dashboard() {
         <View style={styles.loadingRow}>
           <ActivityIndicator size="small" color={colors.primary} />
           <Text style={[styles.hint, { color: colors.textSecondary }]}>
-            Fetching live data from all clinics… (~10s)
+            {showGlobal ? 'Loading dashboard…' : 'Fetching clinic data…'}
           </Text>
         </View>
       )}
@@ -106,10 +108,14 @@ export default function Dashboard() {
       <View style={styles.kpiGrid}>
         <KpiCard
           label="Total Patients"
-          value={(sm?.totalPatients ?? 0).toLocaleString()}
+          value={((sm?.totalPatients ?? 0) + (ten?.totalPatients ?? 0)).toLocaleString()}
           icon={Users}
           tone="primary"
-          sub={`${clinicBreakdown.length} clinics · SmartMeter RPM`}
+          sub={
+            ten && ten.totalPatients > 0
+              ? `${(sm?.totalPatients ?? 0).toLocaleString()} RPM billing · ${ten.totalPatients.toLocaleString()} Tenovi`
+              : `Across ${clinicBreakdown.length} clinics`
+          }
         />
         <KpiCard
           label="Active Alerts"
@@ -139,15 +145,6 @@ export default function Dashboard() {
           tone="warning"
           sub="Worklist · all clinics"
         />
-        {ten && ten.totalDevices > 0 && (
-          <KpiCard
-            label="Active Devices"
-            value={ten.totalDevices.toLocaleString()}
-            icon={Cpu}
-            tone="navy"
-            sub={`${ten.activeGateways} gateways · Tenovi`}
-          />
-        )}
       </View>
 
       {/* ── Compliance Readiness Bars ── */}
@@ -337,30 +334,37 @@ export default function Dashboard() {
       <Card style={[styles.opsCard, { backgroundColor: colors.navy, borderColor: colors.navy }]}>
         <View style={styles.opsHead}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.opsEyebrow}>TENOVI · DEVICE OPERATIONS</Text>
+            <Text style={styles.opsEyebrow}>TENOVI · PATIENT OPERATIONS</Text>
             <Text style={styles.opsTitle}>
-              {ten && ten.totalDevices > 0
-                ? `${ten.totalDevices.toLocaleString()} enrolled devices`
+              {ten && ten.totalPatients > 0
+                ? `${ten.totalPatients.toLocaleString()} enrolled patients`
                 : 'Not connected'}
             </Text>
             <Text style={styles.opsBody}>
-              {ten && ten.totalDevices > 0
-                ? `${ten.activeGateways} active gateways · ${ten.totalPatients.toLocaleString()} patients`
-                : 'Add TENOVI_API_KEY + TENOVI_CLIENT_DOMAIN to backend .env to activate'}
+              {ten && ten.totalPatients > 0
+                ? `${ten.totalRpmPatients} RPM · ${ten.totalRtmPatients} RTM · ${ten.activeGateways} gateways · ${ten.totalDevices} devices`
+                : 'Add TENOVI_USERNAME + TENOVI_PASSWORD + TENOVI_TOTP_SECRET to backend .env'}
             </Text>
+            {ten && ten.totalPatients > 0 && cachedAt && (
+              <Text style={[styles.opsSyncText]}>
+                Synced {fmtRelative(cachedAt)}
+              </Text>
+            )}
           </View>
           <Cpu size={32} color="rgba(255,255,255,0.25)" />
         </View>
-        {ten && ten.totalDevices > 0 && (
+        {ten && ten.totalPatients > 0 && (
           <View style={styles.opsStats}>
             {([
-              ['Total Devices',   ten.totalDevices],
-              ['Active Gateways', ten.activeGateways],
-              ['Patients',        ten.totalPatients],
-            ] as [string, number][]).map(([lbl, val]) => (
+              ['RPM Patients',  ten.totalRpmPatients.toLocaleString()],
+              ['RTM Patients',  ten.totalRtmPatients.toLocaleString()],
+              ['Readings 99454', `${ten.readingsCompliance}%`],
+              ['Review 99457',   `${ten.reviewCompliance}%`],
+              ['Devices',        ten.totalDevices.toLocaleString()],
+            ] as [string, string][]).map(([lbl, val]) => (
               <View key={lbl} style={styles.opsStat}>
                 <Text style={styles.opsStatLabel}>{lbl}</Text>
-                <Text style={styles.opsStatValue}>{val.toLocaleString()}</Text>
+                <Text style={styles.opsStatValue}>{val}</Text>
               </View>
             ))}
           </View>
@@ -446,10 +450,11 @@ const styles = StyleSheet.create({
   opsEyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.4, color: 'rgba(255,255,255,0.5)' },
   opsTitle: { fontSize: 18, fontWeight: '800', color: '#fff', marginTop: 4 },
   opsBody: { fontSize: 12, color: 'rgba(255,255,255,0.65)', marginTop: 6 },
-  opsStats: { flexDirection: 'row', gap: 10, marginTop: 16 },
-  opsStat: { flex: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 10 },
-  opsStatLabel: { fontSize: 9.5, color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase' },
-  opsStatValue: { fontSize: 16, fontWeight: '800', color: '#fff', marginTop: 4 },
+  opsSyncText: { fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 4 },
+  opsStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
+  opsStat: { minWidth: 80, flex: 1, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12, padding: 10 },
+  opsStatLabel: { fontSize: 9, color: 'rgba(255,255,255,0.55)', textTransform: 'uppercase' },
+  opsStatValue: { fontSize: 15, fontWeight: '800', color: '#fff', marginTop: 4 },
 
   aiHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
   aiEyebrow: { fontSize: 10, fontWeight: '700', letterSpacing: 1.4 },

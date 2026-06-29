@@ -47,3 +47,5 @@ example
 # credentials / secrets
 *.csv
 Tenovi_api_docs
+backend/index.html
+.mcp.json

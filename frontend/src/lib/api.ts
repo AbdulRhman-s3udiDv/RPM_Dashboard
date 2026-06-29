@@ -1,5 +1,20 @@
 const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:4000';
 
+// Paths that must never trigger the 401-refresh retry (they ARE the auth endpoints)
+const NO_REFRESH_PATHS = ['/api/auth/login', '/api/auth/refresh'];
+
+// Module-level refresh callback, set by AuthProvider on mount.
+// Called when any request gets a 401 — returns a fresh access token or null.
+let _refreshCallback: (() => Promise<string | null>) | null = null;
+
+// Deduplicates concurrent 401-triggered refreshes so we only call the
+// backend once even when multiple requests expire at the same moment.
+let _pendingRefresh: Promise<string | null> | null = null;
+
+export function configureRefresh(fn: (() => Promise<string | null>) | null) {
+  _refreshCallback = fn;
+}
+
 export type Role = 'super_admin' | 'clinic_admin' | 'staff';
 
 export type ApiUser = { id: string; email: string; role: Role; name: string; clinicId: string | null };
@@ -21,6 +36,7 @@ export type Clinic = {
   specialty: string | null;
   location: string | null;
   created_at: string;
+  hasSmartMeterKey: boolean;
 };
 
 export type SmartMeterAlert = {
@@ -41,8 +57,29 @@ export type ClinicBreakdownItem = {
   openTasks: number;
 };
 
+export type TenoviFacilityItem = {
+  name: string;
+  activePatients: number;
+  rpmPatients: number;
+  rtmPatients: number;
+  readingsCompliance: number;
+  reviewCompliance: number;
+};
+
+export type TenoviSummary = {
+  totalPatients: number;
+  totalRpmPatients: number;
+  totalRtmPatients: number;
+  totalDevices: number;
+  activeGateways: number;
+  readingsCompliance: number;
+  reviewCompliance: number;
+  patientsWithReadings: number;
+  facilityBreakdown: TenoviFacilityItem[];
+};
+
 export type DashboardSummary = {
-  tenovi: { totalDevices: number; activeGateways: number; totalPatients: number };
+  tenovi: TenoviSummary | null;
   smartmeter: {
     totalPatients: number;
     unreadAlerts: number;
@@ -54,6 +91,7 @@ export type DashboardSummary = {
     topAlerts: SmartMeterAlert[];
     clinicBreakdown: ClinicBreakdownItem[];
   };
+  cachedAt?: string | null;
 };
 
 export type AlertStatus = 'open' | 'assigned' | 'escalated' | 'resolved';
@@ -90,7 +128,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
+async function request<T>(path: string, options: RequestInit = {}, token?: string, _retried = false): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${API_URL}${path}`, {
@@ -106,6 +144,22 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
   }
 
   const body = await res.json().catch(() => null);
+
+  // On 401, attempt a single token refresh and retry — but never for auth
+  // endpoints themselves (login/refresh) to avoid infinite loops.
+  if (
+    res.status === 401 &&
+    !_retried &&
+    _refreshCallback &&
+    !NO_REFRESH_PATHS.some((p) => path.startsWith(p))
+  ) {
+    if (!_pendingRefresh) {
+      _pendingRefresh = _refreshCallback().finally(() => { _pendingRefresh = null; });
+    }
+    const newToken = await _pendingRefresh;
+    if (newToken) return request<T>(path, options, newToken, true);
+  }
+
   if (!res.ok) {
     throw new ApiError(body?.error ?? `Request failed (${res.status})`, res.status);
   }
@@ -115,6 +169,8 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
 export const api = {
   login: (email: string, password: string) =>
     request<LoginResponse>('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  refresh: (refreshToken: string) =>
+    request<LoginResponse>('/api/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken }) }),
   me: (token: string) => request<{ user: ApiUser }>('/api/auth/me', { method: 'GET' }, token),
 
   listMembers: (token: string) => request<{ members: Member[] }>('/api/admin/members', { method: 'GET' }, token),
@@ -133,6 +189,8 @@ export const api = {
   listClinics: (token: string) => request<{ clinics: Clinic[] }>('/api/clinics', { method: 'GET' }, token),
   createClinic: (token: string, name: string) =>
     request<{ clinic: Clinic }>('/api/clinics', { method: 'POST', body: JSON.stringify({ name }) }, token),
+  patchClinic: (token: string, id: string, payload: { smartmeter_api_key?: string; specialty?: string; location?: string }) =>
+    request<{ clinic: Clinic }>(`/api/clinics/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }, token),
   deleteClinic: (token: string, id: string) =>
     request<void>(`/api/clinics/${id}`, { method: 'DELETE' }, token),
 
