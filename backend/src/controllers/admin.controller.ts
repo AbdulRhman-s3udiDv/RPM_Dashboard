@@ -59,12 +59,24 @@ export async function listMembers(req: Request, res: Response) {
   const caller = req.profile!;
 
   if (caller.role === "super_admin") {
-    const members = await listProfiles({ roles: ["clinic_admin", "staff"] });
+    // Optional: scope to a specific clinic by name (used by the assign modal)
+    const clinicName = req.query.clinicName as string | undefined;
+    let clinicId: string | undefined;
+    if (clinicName) {
+      const { data } = await supabaseAdmin
+        .from("clinics")
+        .select("id")
+        .eq("name", clinicName)
+        .maybeSingle();
+      clinicId = data?.id;
+    }
+    const members = await listProfiles({ roles: ["clinic_admin", "staff"], clinicId });
     return res.json({ members });
   }
 
   if (caller.role === "clinic_admin") {
-    const members = await listProfiles({ roles: ["staff"], clinicId: caller.clinic_id ?? undefined });
+    // Clinic admin sees all members (admin + staff) in their own clinic
+    const members = await listProfiles({ roles: ["clinic_admin", "staff"], clinicId: caller.clinic_id ?? undefined });
     return res.json({ members });
   }
 

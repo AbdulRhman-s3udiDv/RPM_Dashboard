@@ -3,6 +3,26 @@ import { env } from "../env";
 
 const TENOVI_BASE = "https://api2.tenovi.com";
 
+async function pLimit<T>(
+  tasks: Array<() => Promise<T>>,
+  concurrency: number,
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < tasks.length) {
+      const i = idx++;
+      try {
+        results[i] = { status: "fulfilled", value: await tasks[i]() };
+      } catch (reason) {
+        results[i] = { status: "rejected", reason };
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
+  return results;
+}
+
 // ── TOTP (RFC 6238, SHA-1, 30s window) ────────────────────────────────────
 
 function base32Decode(s: string): Buffer {
@@ -190,21 +210,136 @@ export type TenoviSummary = {
   facilityBreakdown: TenoviFacilityItem[];
 };
 
+// ── Patient sync helpers ───────────────────────────────────────────────────
+
+export type TenoviPatientListItem = {
+  patient: {
+    id: string;
+    name: string;
+    phone_number: string;
+    devices: Array<{ module?: string }>;
+    enrolled_in_ccm: boolean;
+  };
+  status: string;
+  ordering_physician: string;
+  health_condition: string;
+};
+
+/** Fetch all active patients for a single facility (handles pagination) */
+async function listFacilityPatients(facilityId: string): Promise<TenoviPatientListItem[]> {
+  const all: TenoviPatientListItem[] = [];
+  let url: string | null =
+    `${TENOVI_BASE}/clients/rpmcares/rpm/facilities/${facilityId}/patients/?status=AC&page_size=500`;
+  while (url) {
+    const page = await rpmFetch<{
+      count: number;
+      next: string | null;
+      results: TenoviPatientListItem[];
+    }>(url);
+    all.push(...(page.results ?? []));
+    url = page.next ?? null;
+  }
+  return all;
+}
+
+type FacilityPatientsGroup = {
+  facilityName: string;
+  facilityId:   string;
+  patients:     TenoviPatientListItem[];
+};
+
+/** Returns active Tenovi patients grouped by facility name. */
+export async function listAllTenoviPatients(): Promise<FacilityPatientsGroup[]> {
+  const facilities = await rpmFetch<Array<{ id: string; name: string }>>(
+    `${TENOVI_BASE}/clients/rpmcares/facilities/`,
+  );
+
+  const results = await pLimit<FacilityPatientsGroup>(
+    facilities.map((f) => async () => ({
+      facilityName: f.name,
+      facilityId:   f.id,
+      patients:     await listFacilityPatients(f.id),
+    })),
+    5,
+  );
+
+  return results
+    .filter((r): r is PromiseFulfilledResult<FacilityPatientsGroup> => r.status === "fulfilled")
+    .map((r) => r.value);
+}
+
+// ── Patient enrollment ─────────────────────────────────────────────────────
+
+export async function getTenoviFacilities(): Promise<Array<{ id: string; name: string }>> {
+  return rpmFetch<Array<{ id: string; name: string }>>(
+    `${TENOVI_BASE}/clients/rpmcares/facilities/`,
+  );
+}
+
+export async function enrollTenoviPatient(
+  facilityId: string,
+  data: {
+    name: string;
+    phone?: string;
+    externalId: string;
+    orderingPhysician?: string;
+    healthCondition?: string;
+  },
+): Promise<{ patientId: string }> {
+  const token = await getRpmToken();
+  const res = await fetch(
+    `${TENOVI_BASE}/clients/rpmcares/rpm/facilities/${facilityId}/patients/`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Token ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        patient: {
+          name: data.name,
+          phone_number: data.phone ?? "",
+          external_id: data.externalId,
+          enrolled_in_ccm: false,
+        },
+        ordering_physician: data.orderingPhysician ?? "",
+        health_condition: data.healthCondition ?? "",
+        status: "PE",
+      }),
+    },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Tenovi enroll patient → ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as any;
+  const patientId = json?.patient?.id ?? json?.id;
+  if (!patientId) throw new Error("Tenovi patient creation returned no ID");
+  return { patientId: String(patientId) };
+}
+
 // ── Main export ────────────────────────────────────────────────────────────
 
-export async function getTenoviSummary(): Promise<TenoviSummary> {
+export async function getTenoviSummary(allowedClinicNames?: string[]): Promise<TenoviSummary> {
   const [facilitiesResult, gatewaysResult] = await Promise.allSettled([
     rpmFetch<Facility[]>(`${TENOVI_BASE}/clients/rpmcares/facilities/`),
     hwiGet<PagedCount>("/hwi/hwi-gateways/?page_size=1&last_measurement__isnull=false"),
   ]);
 
-  const facilities =
+  let facilities =
     facilitiesResult.status === "fulfilled" ? facilitiesResult.value : [];
   const activeGateways =
     gatewaysResult.status === "fulfilled" ? gatewaysResult.value.count : 0;
 
   if (facilitiesResult.status === "rejected")
     console.warn("[tenovi] Facilities fetch failed:", facilitiesResult.reason);
+
+  // Scope to the caller's clinic(s) — super_admin passes undefined (all facilities)
+  if (allowedClinicNames?.length) {
+    const allowed = new Set(allowedClinicNames.map((n) => n.toLowerCase().trim()));
+    facilities = facilities.filter((f) => allowed.has(f.name.toLowerCase().trim()));
+  }
 
   if (facilities.length === 0) {
     return {
@@ -215,9 +350,10 @@ export async function getTenoviSummary(): Promise<TenoviSummary> {
     };
   }
 
-  // Facilities with active patients — fetch all in parallel (token never re-logged-in).
-  const facilityResults = await Promise.allSettled(
-    facilities.map((f) => fetchFacility(f))
+  // Process 5 facilities at a time — avoids concurrent token invalidation issues
+  const facilityResults = await pLimit(
+    facilities.map((f) => () => fetchFacility(f)),
+    5,
   );
 
   const failed = facilityResults.filter((r) => r.status === "rejected").length;

@@ -23,6 +23,9 @@ export async function summary(req: Request, res: Response) {
   const profile = await findProfileById(req.auth!.sub);
   const isSuperAdmin = !profile || profile.role === "super_admin";
 
+  // Period filter: how many days of billing data to include (7 / 30 / 90)
+  const days = Math.min(90, Math.max(7, parseInt(req.query.days as string) || 30));
+
   // Super admin reads from the background-sync cache (fast, < 100ms).
   // Non-super_admin always fetches live but scoped to a single clinic — still fast.
   // This prevents cross-tenant data leaks (topAlerts + billing fields are org-wide
@@ -73,9 +76,12 @@ export async function summary(req: Request, res: Response) {
       typeof r.smartmeter_api_key === "string" && r.smartmeter_api_key.length > 0)
     .map((r) => ({ name: r.name, apiKey: r.smartmeter_api_key }));
 
+  // For non-super-admin: pass clinic names so Tenovi only returns matching facilities
+  const tenoviFilter = isSuperAdmin ? undefined : rows.map((r) => r.name);
+
   const [tenoviResult, smartmeterResult] = await Promise.allSettled([
-    getTenoviSummary(),
-    getSmartMeterSummary(clinics),
+    getTenoviSummary(tenoviFilter),
+    getSmartMeterSummary(clinics, { days }),
   ]);
 
   return res.json({

@@ -1,0 +1,5 @@
+-- Migration 002: Patients table
+-- NOTE: This table already exists in your Supabase project.
+-- No action needed — the table was created with a richer schema
+-- (device_vendor enum, full_name, external_patient_id, diagnoses[], etc.)
+-- See the patients table definition already in your Supabase schema.

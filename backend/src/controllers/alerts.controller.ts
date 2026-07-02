@@ -1,9 +1,23 @@
 import type { Request, Response } from "express";
+import { findClinicById } from "../models/clinic";
 import { listAlerts, patchAlert, type AlertStatus } from "../models/alert-event";
+import { findProfileById } from "../models/profile";
 
 export async function list(req: Request, res: Response) {
-  const { clinic, status } = req.query as Record<string, string>;
-  const { data, error } = await listAlerts({ clinicName: clinic, status });
+  const profile = await findProfileById(req.auth!.sub);
+  const { status } = req.query as Record<string, string>;
+
+  let clinicFilter: string | undefined = req.query.clinic as string | undefined;
+
+  // Non-super-admins are locked to their assigned clinic only
+  if (profile && profile.role !== "super_admin") {
+    if (!profile.clinic_id) return res.json({ alerts: [] });
+    const clinic = await findClinicById(profile.clinic_id);
+    if (!clinic) return res.json({ alerts: [] });
+    clinicFilter = clinic.name; // force override — ignore any query param
+  }
+
+  const { data, error } = await listAlerts({ clinicName: clinicFilter, status });
   if (error) return res.status(500).json({ error: error.message });
   return res.json({ alerts: data ?? [] });
 }

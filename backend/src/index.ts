@@ -12,6 +12,7 @@ import { alertsRouter } from "./routes/alerts.routes";
 import { authRouter } from "./routes/auth.routes";
 import { clinicsRouter } from "./routes/clinics.routes";
 import { dashboardRouter } from "./routes/dashboard.routes";
+import { patientsRouter } from "./routes/patients.routes";
 
 const app = express();
 
@@ -49,6 +50,7 @@ app.use("/api/admin", adminRouter);
 app.use("/api/clinics", clinicsRouter);
 app.use("/api/alerts", alertsRouter);
 app.use("/api/dashboard", dashboardRouter);
+app.use("/api/patients", patientsRouter);
 
 // Unknown /api/* routes → JSON 404
 app.use("/api", (_req, res) => res.status(404).json({ error: "Not found." }));

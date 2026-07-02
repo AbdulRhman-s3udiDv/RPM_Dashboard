@@ -33,8 +33,11 @@ export default function AlertsScreen() {
   const colors = useTheme();
   const { session } = useAuth();
 
+  const isSuperAdmin = session?.user.role === 'super_admin';
+
   const [alerts, setAlerts] = useState<AlertEvent[] | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
   const [filter, setFilter] = useState<AlertStatus | 'all'>('all');
   const [loadError, setLoadError] = useState('');
   const [assignTarget, setAssignTarget] = useState<AlertEvent | null>(null);
@@ -43,16 +46,17 @@ export default function AlertsScreen() {
     if (!session) return;
     setLoadError('');
     try {
-      const [alertsRes, membersRes] = await Promise.all([
-        api.listAlerts(session.token, filter !== 'all' ? { status: filter } : undefined),
-        api.listMembers(session.token),
-      ]);
+      const alertsRes = await api.listAlerts(session.token, filter !== 'all' ? { status: filter } : undefined);
       setAlerts(alertsRes.alerts);
-      setMembers(membersRes.members);
+      // Pre-load members only for non-super-admin (their clinic is already scoped by backend)
+      if (!isSuperAdmin) {
+        const membersRes = await api.listMembers(session.token);
+        setMembers(membersRes.members);
+      }
     } catch (err) {
       setLoadError(err instanceof ApiError ? err.message : 'Could not load alerts.');
     }
-  }, [session, filter]);
+  }, [session, filter, isSuperAdmin]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -82,6 +86,23 @@ export default function AlertsScreen() {
 
   const openCount = alerts?.filter((a) => a.status === 'open').length ?? 0;
   const criticalCount = alerts?.filter((a) => a.tier === 'CRITICAL' && a.status !== 'resolved').length ?? 0;
+
+  const openAssignModal = useCallback(async (alert: AlertEvent) => {
+    setAssignTarget(alert);
+    if (isSuperAdmin) {
+      // Super admin: fetch members scoped to the alert's clinic
+      setMembersLoading(true);
+      setMembers([]);
+      try {
+        const res = await api.listMembers(session!.token, { clinicName: alert.clinic_name });
+        setMembers(res.members);
+      } catch {
+        setMembers([]);
+      } finally {
+        setMembersLoading(false);
+      }
+    }
+  }, [session, isSuperAdmin]);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.surface }} contentContainerStyle={styles.content}>
@@ -133,7 +154,7 @@ export default function AlertsScreen() {
             <AlertCard
               key={a.id}
               alert={a}
-              onAssign={() => setAssignTarget(a)}
+              onAssign={() => openAssignModal(a)}
               onEscalate={() => handleEscalate(a)}
               onResolve={() => handleResolve(a)}
             />
@@ -145,6 +166,7 @@ export default function AlertsScreen() {
         visible={assignTarget !== null}
         alert={assignTarget}
         members={members}
+        membersLoading={membersLoading}
         currentUserId={session?.user.id ?? ''}
         onClose={() => setAssignTarget(null)}
         onAssigned={(memberId) => {
@@ -251,9 +273,10 @@ function ActionButton({ icon, label, onPress, borderColor, textColor }: {
   );
 }
 
-function AssignModal({ visible, alert: a, members, currentUserId, onClose, onAssigned }: {
+function AssignModal({ visible, alert: a, members, membersLoading, currentUserId, onClose, onAssigned }: {
   visible: boolean; alert: AlertEvent | null; members: Member[];
-  currentUserId: string; onClose: () => void; onAssigned: (id: string) => void;
+  membersLoading: boolean; currentUserId: string;
+  onClose: () => void; onAssigned: (id: string) => void;
 }) {
   const colors = useTheme();
   if (!a) return null;
@@ -263,11 +286,14 @@ function AssignModal({ visible, alert: a, members, currentUserId, onClose, onAss
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={[styles.sheet, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <View style={styles.sheetHead}>
-            <Text style={[styles.sheetTitle, { color: colors.text }]}>Assign alert</Text>
+            <View>
+              <Text style={[styles.sheetTitle, { color: colors.text }]}>Assign alert</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 2 }}>{a.clinic_name}</Text>
+            </View>
             <Pressable onPress={onClose} hitSlop={10}><X size={18} color={colors.textSecondary} /></Pressable>
           </View>
           <Text style={[styles.sheetSub, { color: colors.textSecondary }]} numberOfLines={2}>
-            {a.patient_name} - {a.alert_type} ({a.value} {a.unit})
+            {a.patient_name} · {a.alert_type} ({a.value} {a.unit})
           </Text>
           <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={{ gap: 8, paddingTop: 12 }}>
             <Pressable onPress={() => onAssigned(currentUserId)} style={[styles.memberRow, { borderColor: colors.border }]}>
@@ -276,23 +302,26 @@ function AssignModal({ visible, alert: a, members, currentUserId, onClose, onAss
               </View>
               <Text style={[styles.memberName, { color: colors.primary }]}>Assign to myself</Text>
             </Pressable>
-            {members.map((m) => (
-              <Pressable key={m.id} onPress={() => onAssigned(m.id)} style={[styles.memberRow, { borderColor: colors.border }]}>
-                <View style={[styles.memberAvatar, { backgroundColor: colors.primary + '15' }]}>
-                  <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '700' }}>
-                    {m.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
-                  </Text>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.memberName, { color: colors.text }]}>{m.name}</Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 11 }}>{m.role.replace('_', ' ')}</Text>
-                </View>
-              </Pressable>
-            ))}
-            {members.length === 0 && (
+            {membersLoading ? (
+              <ActivityIndicator color={colors.primary} style={{ paddingVertical: 20 }} />
+            ) : members.length === 0 ? (
               <Text style={{ color: colors.textSecondary, fontSize: 12.5, textAlign: 'center', paddingVertical: 16 }}>
-                No staff members yet.
+                No other members in this clinic yet.
               </Text>
+            ) : (
+              members.map((m) => (
+                <Pressable key={m.id} onPress={() => onAssigned(m.id)} style={[styles.memberRow, { borderColor: colors.border }]}>
+                  <View style={[styles.memberAvatar, { backgroundColor: colors.primary + '15' }]}>
+                    <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '700' }}>
+                      {m.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.memberName, { color: colors.text }]}>{m.name}</Text>
+                    <Text style={{ color: colors.textSecondary, fontSize: 11 }}>{m.role.replace('_', ' ')}</Text>
+                  </View>
+                </Pressable>
+              ))
             )}
           </ScrollView>
         </Pressable>

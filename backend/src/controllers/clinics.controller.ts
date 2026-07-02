@@ -1,12 +1,25 @@
 ﻿import type { Request, Response } from "express";
 import { z } from "zod";
 import { supabaseAdmin } from "../lib/supabase";
-import { createClinic, deleteClinic, listClinics, updateClinic } from "../models/clinic";
+import { createClinic, deleteClinic, findClinicById, listClinics, updateClinic } from "../models/clinic";
 import { getSmartMeterSummary } from "../services/smartmeter";
 
 const createClinicSchema = z.object({ name: z.string().min(1) });
 
-export async function getClinics(_req: Request, res: Response) {
+export async function getClinics(req: Request, res: Response) {
+  const { data: profile } = await supabaseAdmin
+    .from("profiles")
+    .select("role, clinic_id")
+    .eq("id", (req as any).auth!.sub)
+    .maybeSingle();
+
+  // Non-super-admins see only their own clinic
+  if (profile && profile.role !== "super_admin") {
+    if (!profile.clinic_id) return res.json({ clinics: [] });
+    const clinic = await findClinicById(profile.clinic_id);
+    return res.json({ clinics: clinic ? [clinic] : [] });
+  }
+
   const clinics = await listClinics();
   return res.json({ clinics });
 }

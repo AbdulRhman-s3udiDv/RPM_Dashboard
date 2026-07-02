@@ -120,6 +120,54 @@ export type AlertEvent = {
   created_at: string;
 };
 
+export type PatientSource  = 'tenovi' | 'smartmeter';
+export type PatientProgram = 'RPM' | 'RTM' | 'CCM' | 'PCM';
+
+// Matches the existing public.patients table in Supabase
+export type Patient = {
+  id: string;
+  clinic_id: string;
+  clinic_name: string | null;
+  source: PatientSource;            // device_vendor enum
+  external_patient_id: string;
+  mrn: string | null;
+  full_name: string;
+  dob: string | null;
+  sex: string | null;               // sex_type enum
+  phone: string | null;
+  language: string;
+  provider_id: string | null;
+  assigned_staff_id: string | null;
+  program: PatientProgram;
+  diagnoses: string[];
+  icd10_codes: string[];
+  insurance_payer: string | null;
+  insurance_class: string | null;
+  enrollment_status: string;        // enrollment_status enum (default 'active')
+  consent: boolean;
+  risk: string;                     // risk_level enum
+  enrolled_at: string;
+  disenrolled_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EnrollPatientInput = {
+  clinicId: string;
+  system: PatientSource;
+  firstName: string;
+  lastName: string;
+  dob?: string;
+  sex?: 'M' | 'F';
+  phone?: string;
+  language?: string;
+  insurance?: string;
+  program: PatientProgram;
+  diagnosis?: string;
+  orderingPhysician?: string;
+  healthCondition?: string;
+};
+
 export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -173,7 +221,10 @@ export const api = {
     request<LoginResponse>('/api/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken }) }),
   me: (token: string) => request<{ user: ApiUser }>('/api/auth/me', { method: 'GET' }, token),
 
-  listMembers: (token: string) => request<{ members: Member[] }>('/api/admin/members', { method: 'GET' }, token),
+  listMembers: (token: string, params?: { clinicName?: string }) => {
+    const qs = params?.clinicName ? `?clinicName=${encodeURIComponent(params.clinicName)}` : '';
+    return request<{ members: Member[] }>(`/api/admin/members${qs}`, { method: 'GET' }, token);
+  },
   inviteMember: (
     token: string,
     payload: { email: string; name: string; role: 'clinic_admin' | 'staff'; clinicId: string },
@@ -206,8 +257,39 @@ export const api = {
   updateAlert: (token: string, id: string, patch: { status?: AlertStatus; assignedTo?: string | null }) =>
     request<{ alert: AlertEvent }>(`/api/alerts/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }, token),
 
-  getDashboardSummary: (token: string) =>
-    request<DashboardSummary>('/api/dashboard/summary', { method: 'GET' }, token),
+  getDashboardSummary: (token: string, days = 30) =>
+    request<DashboardSummary>(`/api/dashboard/summary?days=${days}`, { method: 'GET' }, token),
+
+  listPatients: (
+    token: string,
+    params?: {
+      clinicId?: string;
+      source?:   PatientSource | '';
+      status?:   string;
+      program?:  PatientProgram | '';
+      risk?:     string;
+      search?:   string;
+      page?:     number;
+    },
+  ) => {
+    const entries = Object.entries(params ?? {}).filter(([, v]) => v != null && v !== '');
+    const qs = entries.length ? '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString() : '';
+    return request<{ patients: Patient[]; total: number }>(`/api/patients${qs}`, { method: 'GET' }, token);
+  },
+  getPatient: (token: string, id: string) =>
+    request<{ patient: Patient }>(`/api/patients/${id}`, { method: 'GET' }, token),
+  enrollPatient: (token: string, data: EnrollPatientInput) =>
+    request<{ patient: Patient; warning?: string }>(
+      '/api/patients/enroll',
+      { method: 'POST', body: JSON.stringify(data) },
+      token,
+    ),
+  getSystemClinics: (token: string, system: PatientSource) =>
+    request<{ clinics: Pick<Clinic, 'id' | 'name'>[]; warning?: string }>(
+      `/api/patients/system-clinics?system=${system}`,
+      { method: 'GET' },
+      token,
+    ),
 
   getClinicBreakdown: (token: string) =>
     request<{ breakdown: ClinicBreakdownItem[] }>('/api/clinics/breakdown', { method: 'GET' }, token),

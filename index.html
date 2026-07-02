@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Tenovi RPM API — Internal Documentation</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --sidebar: #161b22;
+    --card: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --green: #3fb950;
+    --blue: #58a6ff;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --tag-get: #1f6feb;
+    --tag-post: #1a7f37;
+    --tag-patch: #9e6a03;
+    --tag-delete: #b62324;
+    --code-bg: #161b22;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; display: flex; min-height: 100vh; }
+
+  /* Sidebar */
+  #sidebar {
+    width: 260px; min-width: 260px; background: var(--sidebar); border-right: 1px solid var(--border);
+    position: fixed; top: 0; left: 0; height: 100vh; overflow-y: auto; padding: 0 0 40px;
+  }
+  #sidebar .logo { padding: 20px 16px; border-bottom: 1px solid var(--border); }
+  #sidebar .logo h1 { font-size: 16px; font-weight: 700; color: var(--text); }
+  #sidebar .logo .badge { font-size: 10px; background: var(--blue); color: #fff; padding: 2px 6px; border-radius: 10px; margin-left: 6px; vertical-align: middle; }
+  #sidebar .logo p { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  #sidebar .section-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; padding: 16px 16px 4px; }
+  #sidebar a { display: block; padding: 6px 16px; color: var(--muted); text-decoration: none; font-size: 13px; border-left: 2px solid transparent; }
+  #sidebar a:hover { color: var(--text); background: rgba(255,255,255,.04); }
+  #sidebar a.active { color: var(--blue); border-left-color: var(--blue); background: rgba(88,166,255,.08); }
+  #sidebar .method-tag { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-right: 5px; vertical-align: middle; }
+  .m-get { background: var(--tag-get); color:#fff; }
+  .m-post { background: var(--tag-post); color:#fff; }
+  .m-patch { background: var(--tag-patch); color:#fff; }
+
+  /* Main */
+  #main { margin-left: 260px; flex: 1; padding: 40px 48px; max-width: 1000px; }
+  section { margin-bottom: 60px; }
+  h2 { font-size: 22px; font-weight: 700; margin-bottom: 6px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 16px; font-weight: 600; margin: 28px 0 10px; color: var(--text); }
+  p { color: var(--muted); line-height: 1.6; margin-bottom: 10px; }
+  a { color: var(--blue); }
+
+  /* Warning / info boxes */
+  .alert { padding: 12px 16px; border-radius: 6px; margin: 16px 0; font-size: 13px; line-height: 1.5; }
+  .alert-warn { background: rgba(210,153,34,.12); border: 1px solid rgba(210,153,34,.4); color: #e3b341; }
+  .alert-info { background: rgba(88,166,255,.08); border: 1px solid rgba(88,166,255,.3); color: var(--blue); }
+  .alert-success { background: rgba(63,185,80,.08); border: 1px solid rgba(63,185,80,.3); color: var(--green); }
+
+  /* Endpoint cards */
+  .endpoint-card { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 24px; overflow: hidden; }
+  .endpoint-header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; background: var(--card); cursor: pointer; }
+  .endpoint-header:hover { background: #222b36; }
+  .method-pill { font-size: 11px; font-weight: 800; padding: 3px 10px; border-radius: 4px; min-width: 56px; text-align: center; }
+  .pill-get { background: rgba(31,111,235,.25); color: #58a6ff; border: 1px solid rgba(31,111,235,.5); }
+  .pill-post { background: rgba(26,127,55,.25); color: #3fb950; border: 1px solid rgba(26,127,55,.5); }
+  .endpoint-path { font-family: 'SF Mono', Consolas, monospace; font-size: 13px; color: var(--text); flex: 1; }
+  .endpoint-summary { font-size: 12px; color: var(--muted); margin-left: auto; }
+  .endpoint-body { padding: 16px; border-top: 1px solid var(--border); background: var(--bg); }
+
+  /* Params table */
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 13px; }
+  th { text-align: left; padding: 8px 10px; color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  td:first-child { font-family: 'SF Mono', monospace; color: var(--purple); }
+  td.required::after { content: " *"; color: var(--red); }
+  .type-tag { font-size: 11px; color: var(--muted); background: rgba(255,255,255,.06); padding: 1px 6px; border-radius: 3px; }
+
+  /* Code blocks */
+  .code-block { position: relative; }
+  .code-block pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow-x: auto; font-family: 'SF Mono', Consolas, monospace; font-size: 12px; line-height: 1.6; color: #e6edf3; }
+  .copy-btn { position: absolute; top: 8px; right: 8px; background: var(--card); border: 1px solid var(--border); color: var(--muted); font-size: 11px; padding: 3px 8px; border-radius: 4px; cursor: pointer; }
+  .copy-btn:hover { color: var(--text); border-color: var(--text); }
+  .copy-btn.copied { color: var(--green); border-color: var(--green); }
+  .lang-tabs { display: flex; gap: 4px; margin-bottom: 0; }
+  .lang-tab { background: var(--card); border: 1px solid var(--border); border-bottom: none; border-radius: 4px 4px 0 0; padding: 5px 12px; font-size: 11px; cursor: pointer; color: var(--muted); }
+  .lang-tab.active { background: var(--code-bg); color: var(--text); border-bottom-color: var(--code-bg); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* Response badge */
+  .status-200 { color: var(--green); font-weight: 700; }
+  .status-400 { color: var(--orange); font-weight: 700; }
+  .status-401 { color: var(--red); font-weight: 700; }
+
+  /* Credential box */
+  .cred-box { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 12px 0; }
+  .cred-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .cred-row:last-child { border: none; }
+  .cred-label { color: var(--muted); min-width: 140px; font-size: 12px; }
+  .cred-value { font-family: 'SF Mono', monospace; color: var(--green); word-break: break-all; flex: 1; }
+  .cred-value.secret { color: var(--orange); }
+
+  /* Facility table */
+  .fac-table td { font-size: 12px; }
+  .fac-id { font-family: monospace; font-size: 11px; color: var(--purple); }
+  .count-pill { background: rgba(63,185,80,.15); color: var(--green); border-radius: 10px; padding: 1px 8px; font-size: 11px; }
+
+  /* Flow diagram */
+  .flow { display: flex; flex-direction: column; gap: 6px; margin: 16px 0; }
+  .flow-step { display: flex; align-items: flex-start; gap: 12px; }
+  .flow-num { background: var(--blue); color: #fff; border-radius: 50%; width: 22px; height: 22px; min-width: 22px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; margin-top: 2px; }
+  .flow-content { flex: 1; }
+  .flow-arrow { margin-left: 10px; color: var(--muted); font-size: 18px; line-height: 1; }
+  hr.flow-line { border: none; border-left: 1px dashed var(--border); height: 14px; margin-left: 10px; }
+</style>
+</head>
+<body>
+
+<nav id="sidebar">
+  <div class="logo">
+    <h1>Tenovi RPM API <span class="badge">INTERNAL</span></h1>
+    <p>rpmcares · Reverse-engineered docs</p>
+  </div>
+
+  <div class="section-label">Overview</div>
+  <a href="#overview" class="active">Introduction</a>
+  <a href="#credentials">Credentials</a>
+  <a href="#auth-flow">Authentication Flow</a>
+  <a href="#totp">TOTP Automation</a>
+
+  <div class="section-label">RPM API</div>
+  <a href="#ep-auth-step1"><span class="method-tag m-post">POST</span>/auth/ — Step 1</a>
+  <a href="#ep-auth-step2"><span class="method-tag m-post">POST</span>/auth/ — Step 2</a>
+  <a href="#ep-facilities"><span class="method-tag m-get">GET</span>/facilities/</a>
+  <a href="#ep-patients"><span class="method-tag m-get">GET</span>/facilities/{id}/patients/</a>
+  <a href="#ep-devices"><span class="method-tag m-get">GET</span>/data/client-devices/</a>
+  <a href="#ep-measurements"><span class="method-tag m-get">GET</span>/data/patients/{id}/measurements/</a>
+
+  <div class="section-label">HWI API</div>
+  <a href="#hwi-overview">Overview</a>
+  <a href="#ep-hwi-patients"><span class="method-tag m-get">GET</span>/hwi-patients/</a>
+  <a href="#ep-hwi-gateways"><span class="method-tag m-get">GET</span>/hwi-gateways/</a>
+
+  <div class="section-label">Reference</div>
+  <a href="#metric-ids">Metric IDs</a>
+  <a href="#device-types">Device Types</a>
+  <a href="#facilities-list">All Facilities</a>
+  <a href="#status-codes">Status Codes</a>
+  <a href="#n8n">n8n Workflow</a>
+</nav>
+
+<main id="main">
+
+<!-- OVERVIEW -->
+<section id="overview">
+  <h2>Introduction</h2>
+  <p>This document covers the Tenovi API as used by the <strong>RPMCares</strong> client account. It was produced by reverse-engineering the <code>app.tenovi.com</code> web application's network traffic and verified against the live API.</p>
+
+  <div class="alert alert-warn">
+    ⚠️ <strong>SENSITIVE — INTERNAL USE ONLY.</strong> This document contains live API credentials, a TOTP secret, and account data. Do not share externally or commit to version control.
+  </div>
+
+  <h3>Two Separate APIs</h3>
+  <p>Tenovi exposes two completely different APIs under the same domain. They are <strong>not interchangeable</strong>:</p>
+
+  <table>
+    <tr><th>API</th><th>Base Path</th><th>Auth Type</th><th>What it contains</th></tr>
+    <tr>
+      <td><strong>RPM / Clinical</strong></td>
+      <td><code>https://api2.tenovi.com/clients/rpmcares/</code></td>
+      <td>Token (session)</td>
+      <td>Facilities, patient rosters, measurements, clinical modules (RPM/RTM)</td>
+    </tr>
+    <tr>
+      <td><strong>HWI / Hardware</strong></td>
+      <td><code>https://api2.tenovi.com/clients/rpmcares/hwi/</code></td>
+      <td>Api-Key</td>
+      <td>Gateways, hardware devices, bulk orders — no clinical patient data</td>
+    </tr>
+  </table>
+
+  <div class="alert alert-info">
+    ℹ️ The RPM API powers the web app and contains all clinic, patient, and measurement data. The HWI API has no measurement endpoints — the <code>/hwi/schema/swagger-ui/</code> path is not accessible via the API; it is a frontend SPA route on <code>app.tenovi.com</code> only. This document is the only reference for the RPM API.
+  </div>
+  <div class="alert alert-warn">
+    ⚠️ <strong>Do NOT use the HWI API to fetch patient measurements.</strong> HWI patient IDs (16 records only) are completely separate from RPM patient UUIDs. Sending RPM UUIDs to any HWI endpoint returns 404 or empty data. Patient measurement history is only available via the RPM endpoint <code>GET /data/patients/{uuid}/measurements/</code>.
+  </div>
+</section>
+
+<!-- CREDENTIALS -->
+<section id="credentials">
+  <h2>Credentials</h2>
+  <div class="alert alert-warn">⚠️ Rotate these credentials after sharing this document with anyone outside the immediate team.</div>
+
+  <h3>RPM API Login (Token-based)</h3>
+  <div class="cred-box">
+    <div class="cred-row"><span class="cred-label">Username</span><span class="cred-value">hyousif@rpmcares.com</span></div>
+    <div class="cred-row"><span class="cred-label">Password</span><span class="cred-value secret">Storm@123</span></div>
+    <div class="cred-row"><span class="cred-label">TOTP Secret (Base32)</span><span class="cred-value secret">EFTW5B2MWJSAV4Z3ZL2DVEYPUWQLU4VV</span></div>
+    <div class="cred-row"><span class="cred-label">OTP Method</span><span class="cred-value">A (Authenticator App)</span></div>
+    <div class="cred-row"><span class="cred-label">Client Domain</span><span class="cred-value">rpmcares</span></div>
+  </div>
+
+  <h3>HWI API Key (hardware endpoints only)</h3>
+  <div class="cred-box">
+    <div class="cred-row"><span class="cred-label">Key Name</span><span class="cred-value">n8n</span></div>
+    <div class="cred-row"><span class="cred-label">Full API Key</span><span class="cred-value secret">hwjFc4nX.lU6gFC35IfZ39QgnsZZL5HNb9OBPSgZJ</span></div>
+    <div class="cred-row"><span class="cred-label">Header format</span><span class="cred-value">Authorization: Api-Key hwjFc4nX.lU6gFC35IfZ39QgnsZZL5HNb9OBPSgZJ</span></div>
+  </div>
+</section>
+
+<!-- AUTH FLOW -->
+<section id="auth-flow">
+  <h2>Authentication Flow</h2>
+  <p>The RPM API uses a <strong>two-step login</strong>. The same endpoint <code>/auth/</code> is called twice: first with username/password, then again with the TOTP code added. The token returned in step 2 is used for all subsequent calls.</p>
+
+  <div class="alert alert-warn">
+    ⚠️ <strong>Token rotation:</strong> A new token is issued on every login. The previous token is immediately invalidated. This means if two processes log in concurrently, one will kill the other's token.
+  </div>
+
+  <div class="flow">
+    <div class="flow-step">
+      <div class="flow-num">1</div>
+      <div class="flow-content">
+        <strong>Compute TOTP code</strong> — use the TOTP secret to generate the current 6-digit code (valid for 30 seconds). See <a href="#totp">TOTP Automation</a> section.
+      </div>
+    </div>
+    <hr class="flow-line">
+    <div class="flow-step">
+      <div class="flow-num">2</div>
+      <div class="flow-content">
+        <strong>POST /auth/</strong> with <code>{username, password}</code> only → returns <code>mode: "setup_otp"</code> and a <code>session_cookie</code> UUID. <em>(This step can be skipped — you may generate your own UUID for session_cookie.)</em>
+      </div>
+    </div>
+    <hr class="flow-line">
+    <div class="flow-step">
+      <div class="flow-num">3</div>
+      <div class="flow-content">
+        <strong>POST /auth/</strong> again with <code>{username, password, otp, otp_method: "A", session_cookie}</code> → returns <code>{"token": "...", "status": "Logged in"}</code>.
+      </div>
+    </div>
+    <hr class="flow-line">
+    <div class="flow-step">
+      <div class="flow-num">4</div>
+      <div class="flow-content">
+        <strong>Use token</strong> in every subsequent request: <code>Authorization: Token &lt;token&gt;</code>.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TOTP -->
+<section id="totp">
+  <h2>TOTP Automation</h2>
+  <p>The authenticator OTP is computed locally using the shared secret — no network call, no waiting. The algorithm is RFC 6238 TOTP (same as Google Authenticator). It uses the current Unix time divided into 30-second windows.</p>
+
+  <div class="lang-tabs" id="totp-tabs">
+    <div class="lang-tab active" onclick="switchTab('totp','python')">Python</div>
+    <div class="lang-tab" onclick="switchTab('totp','js')">JavaScript (Node)</div>
+    <div class="lang-tab" onclick="switchTab('totp','n8n')">n8n Code Node</div>
+  </div>
+
+  <div id="totp-python" class="tab-content active code-block">
+    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+    <pre><span style="color:#8b949e"># Requires only Python standard library</span>
+import hmac, hashlib, time, base64, uuid, urllib.request, json
+
+TOTP_SECRET  = "EFTW5B2MWJSAV4Z3ZL2DVEYPUWQLU4VV"
+USERNAME     = "hyousif@rpmcares.com"
+PASSWORD     = "Storm@123"
+BASE_URL     = "https://api2.tenovi.com/clients/rpmcares"
+
+<span style="color:#d2a8ff">def</span> <span style="color:#79c0ff">compute_totp</span>(secret):
+    key = base64.b32decode(secret.upper())
+    counter = int(time.time() // 30)
+    h = hmac.new(key, counter.to_bytes(8, 'big'), hashlib.sha1).digest()
+    offset = h[-1] &amp; 0xf
+    code = (int.from_bytes(h[offset:offset+4], 'big') &amp; 0x7fffffff) % 1000000
+    return f"{code:06d}"
+
+<span style="color:#d2a8ff">def</span> <span style="color:#79c0ff">get_token</span>():
+    otp = compute_totp(TOTP_SECRET)
+    payload = {
+        "username": USERNAME,
+        "password": PASSWORD,
+        "otp": otp,
+        "otp_method": "A",
+        "session_cookie": str(uuid.uuid4())
+    }
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        "https://api2.tenovi.com/auth/", data=data, method="POST",
+        headers={"Content-Type": "application/json", "Origin": "https://app.tenovi.com"}
+    )
+    resp = json.load(urllib.request.urlopen(req))
+    return resp["token"]
+
+<span style="color:#8b949e"># Usage</span>
+token = get_token()
+print("Token:", token)</pre>
+  </div>
+
+  <div id="totp-js" class="tab-content code-block">
+    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+    <pre><span style="color:#8b949e">// Node.js — no external packages needed</span>
+const crypto = require('crypto');
+
+const TOTP_SECRET = "EFTW5B2MWJSAV4Z3ZL2DVEYPUWQLU4VV";
+const USERNAME    = "hyousif@rpmcares.com";
+const PASSWORD    = "Storm@123";
+
+<span style="color:#d2a8ff">function</span> <span style="color:#79c0ff">base32Decode</span>(s) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const c of s.replace(/=+$/, '').toUpperCase()) {
+    const v = alphabet.indexOf(c);
+    if (v === -1) continue;
+    bits += v.toString(2).padStart(5, '0');
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 &lt;= bits.length; i += 8)
+    bytes.push(parseInt(bits.substring(i, i + 8), 2));
+  return Buffer.from(bytes);
+}
+
+<span style="color:#d2a8ff">function</span> <span style="color:#79c0ff">computeTOTP</span>(secret) {
+  const key = base32Decode(secret);
+  const counter = Math.floor(Date.now() / 1000 / 30);
+  const buf = Buffer.alloc(8);
+  buf.writeBigInt64BE(BigInt(counter));
+  const h = crypto.createHmac('sha1', key).update(buf).digest();
+  const offset = h[h.length - 1] &amp; 0xf;
+  const code = ((h[offset] &amp; 0x7f) &lt;&lt; 24 | h[offset+1] &lt;&lt; 16 | h[offset+2] &lt;&lt; 8 | h[offset+3]) % 1000000;
+  return code.toString().padStart(6, '0');
+}
+
+async <span style="color:#d2a8ff">function</span> <span style="color:#79c0ff">getToken</span>() {
+  const res = await fetch('https://api2.tenovi.com/auth/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Origin': 'https://app.tenovi.com' },
+    body: JSON.stringify({
+      username: USERNAME, password: PASSWORD,
+      otp: computeTOTP(TOTP_SECRET), otp_method: 'A',
+      session_cookie: crypto.randomUUID()
+    })
+  });
+  const data = await res.json();
+  return data.token;
+}
+
+getToken().then(t => console.log('Token:', t));</pre>
+  </div>
+
+  <div id="totp-n8n" class="tab-content code-block">
+    <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+    <pre><span style="color:#8b949e">// n8n Code Node — paste this in a "Code" node</span>
+<span style="color:#8b949e">// Add BEFORE the two HTTP Request nodes for login</span>
+const crypto = require('crypto');
+
+const TOTP_SECRET = "EFTW5B2MWJSAV4Z3ZL2DVEYPUWQLU4VV";
+
+function base32Decode(s) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const c of s.replace(/=+$/, '').toUpperCase()) {
+    const v = alphabet.indexOf(c);
+    if (v !== -1) bits += v.toString(2).padStart(5, '0');
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 &lt;= bits.length; i += 8)
+    bytes.push(parseInt(bits.substring(i, i + 8), 2));
+  return Buffer.from(bytes);
+}
+
+function computeTOTP(secret) {
+  const key = base32Decode(secret);
+  const counter = Math.floor(Date.now() / 1000 / 30);
+  const buf = Buffer.alloc(8);
+  buf.writeBigInt64BE(BigInt(counter));
+  const h = crypto.createHmac('sha1', key).update(buf).digest();
+  const offset = h[h.length - 1] &amp; 0xf;
+  const code = ((h[offset] &amp; 0x7f) &lt;&lt; 24 | h[offset+1] &lt;&lt; 16 | h[offset+2] &lt;&lt; 8 | h[offset+3]) % 1000000;
+  return code.toString().padStart(6, '0');
+}
+
+return [{
+  json: {
+    otp: computeTOTP(TOTP_SECRET),
+    session_cookie: crypto.randomUUID(),
+    username: "hyousif@rpmcares.com",
+    password: "Storm@123"
+  }
+}];</pre>
+  </div>
+</section>
+
+<!-- AUTH STEP 1 -->
+<section id="ep-auth-step1">
+  <h2>POST /auth/ — Step 1 (optional)</h2>
+  <div class="endpoint-card">
+    <div class="endpoint-header">
+      <span class="method-pill pill-post">POST</span>
+      <span class="endpoint-path">https://api2.tenovi.com/auth/</span>
+      <span class="endpoint-summary">Initiate login</span>
+    </div>
+    <div class="endpoint-body">
+      <p>First step of login. Returns the 2FA challenge. <strong>This step can be skipped</strong> — you can go directly to Step 2 with a self-generated UUID for <code>session_cookie</code>.</p>
+
+      <h3>Request Body</h3>
+      <table>
+        <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+        <tr><td class="required">username</td><td><span class="type-tag">string</span></td><td>Yes</td><td>Tenovi login email</td></tr>
+        <tr><td class="required">password</td><td><span class="type-tag">string</span></td><td>Yes</td><td>Account password</td></tr>
+      </table>
+
+      <h3>Response — 200</h3>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre>{
+  "mode": "setup_otp",
+  "status": "success",
+  "message": "Please select a 2-Factor Authentication Method",
+  "otp_secret": "EFTW5B2MWJSAV4Z3ZL2DVEYPUWQLU4VV",
+  "qr_code": ["&lt;svg ...&gt;", "EFTW5B2MWJSAV4Z3ZL2DVEYPUWQLU4VV"]
+}</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- AUTH STEP 2 -->
+<section id="ep-auth-step2">
+  <h2>POST /auth/ — Step 2 (login)</h2>
+  <div class="endpoint-card">
+    <div class="endpoint-header">
+      <span class="method-pill pill-post">POST</span>
+      <span class="endpoint-path">https://api2.tenovi.com/auth/</span>
+      <span class="endpoint-summary">Complete login with TOTP — returns token</span>
+    </div>
+    <div class="endpoint-body">
+      <p>Same endpoint as Step 1, but with the OTP fields added. This is the call that returns the usable auth token.</p>
+
+      <h3>Request Body</h3>
+      <table>
+        <tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+        <tr><td class="required">username</td><td><span class="type-tag">string</span></td><td>Yes</td><td>hyousif@rpmcares.com</td></tr>
+        <tr><td class="required">password</td><td><span class="type-tag">string</span></td><td>Yes</td><td>Account password</td></tr>
+        <tr><td class="required">otp</td><td><span class="type-tag">string</span></td><td>Yes</td><td>6-digit TOTP code computed from secret</td></tr>
+        <tr><td class="required">otp_method</td><td><span class="type-tag">string</span></td><td>Yes</td><td>Always <code>"A"</code> (Authenticator app)</td></tr>
+        <tr><td class="required">session_cookie</td><td><span class="type-tag">uuid</span></td><td>Yes</td><td>Any random UUID v4 — generate client-side</td></tr>
+      </table>
+
+      <h3>Response — 200 (success)</h3>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre>{
+  "status": "Logged in",
+  "message": "Logged in",
+  "token": "9dc95dd2e335...",         <span style="color:#8b949e">// 40-char hex — use in Authorization header</span>
+  "user": {
+    "id": "503e65be-3586-4cea-93f5-fe801b697a0e",
+    "username": "hyousif@rpmcares.com",
+    "name": "Hani Yousif, MD, FACP",
+    "email": "hyousif@rpmcares.com",
+    "is_active": true,
+    "user_role": "client_admin_role"
+  },
+  "client": {
+    "id": "caaa6f0a-6bee-4a8f-837f-1241dd3567f6",
+    "name": "RPMCares",
+    "domain": "rpmcares",
+    "modules": "RPM,RTM,HWI,ASR"
+  },
+  "session_cookie": "...",
+  "blocked_routes": [],
+  "read_only_routes": [],
+  "write_routes": []
+}</pre>
+      </div>
+
+      <div class="alert alert-info">
+        The <code>token</code> field is invalidated every time a new login occurs. If multiple systems share one account, a new login will kill all other active sessions.
+      </div>
+
+      <h3>Example — Python</h3>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre>token = get_token()   <span style="color:#8b949e"># see TOTP section above</span>
+headers = {"Authorization": f"Token {token}", "Accept": "application/json"}</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FACILITIES -->
+<section id="ep-facilities">
+  <h2>GET /facilities/</h2>
+  <div class="endpoint-card">
+    <div class="endpoint-header">
+      <span class="method-pill pill-get">GET</span>
+      <span class="endpoint-path">https://api2.tenovi.com/clients/rpmcares/facilities/</span>
+      <span class="endpoint-summary">List all clinics/facilities</span>
+    </div>
+    <div class="endpoint-body">
+      <p>Returns all facility (clinic) objects for the rpmcares account. Each facility has an <code>id</code> used to fetch its patients.</p>
+
+      <h3>Auth</h3>
+      <p><code>Authorization: Token &lt;token&gt;</code></p>
+
+      <h3>Query Parameters</h3>
+      <p>None confirmed. Endpoint returns all facilities in a single response (24 total, no pagination needed).</p>
+
+      <h3>Response — 200</h3>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre>[
+  {
+    "id": "66c9af32-9c90-45b2-a3dd-a30f9c02a046",
+    "name": "Healthy Me Clinic PLLC",
+    "properties": [],
+    "created": "2025-01-29T01:42:18.340937Z",
+    "modified": "2025-06-10T14:22:00.000000Z"
+  },
+  ...
+]</pre>
+      </div>
+
+      <h3>Python Example</h3>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre>import urllib.request, json
+
+token = get_token()
+req = urllib.request.Request(
+    "https://api2.tenovi.com/clients/rpmcares/facilities/",
+    headers={"Authorization": f"Token {token}", "Accept": "application/json"}
+)
+facilities = json.load(urllib.request.urlopen(req))
+for f in facilities:
+    print(f["name"], "→", f["id"])</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PATIENTS -->
+<section id="ep-patients">
+  <h2>GET /rpm/facilities/{id}/patients/</h2>
+  <div class="endpoint-card">
+    <div class="endpoint-header">
+      <span class="method-pill pill-get">GET</span>
+      <span class="endpoint-path">https://api2.tenovi.com/clients/rpmcares/rpm/facilities/{facility_id}/patients/</span>
+      <span class="endpoint-summary">List patients in a facility</span>
+    </div>
+    <div class="endpoint-body">
+      <p>Returns a paginated list of patients enrolled in a specific facility. Each patient includes their devices, status, physician, measurements, and RPM/RTM module assignment.</p>
+
+      <h3>Auth</h3>
+      <p><code>Authorization: Token &lt;token&gt;</code></p>
+
+      <h3>Path Parameters</h3>
+      <table>
+        <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+        <tr><td>facility_id</td><td><span class="type-tag">uuid</span></td><td>Facility ID from <code>GET /facilities/</code></td></tr>
+      </table>
+
+      <h3>Query Parameters</h3>
+      <table>
+        <tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
+        <tr><td>status</td><td><span class="type-tag">string</span></td><td>(all)</td><td>Filter by status: <code>AC</code> Active, <code>PE</code> Pending, <code>HO</code> Hold, <code>DI</code> Discharged, <code>DE</code> Declined</td></tr>
+        <tr><td>page_size</td><td><span class="type-tag">integer</span></td><td>10</td><td>Results per page. Use <code>500</code> to get all.</td></tr>
+        <tr><td>page</td><td><span class="type-tag">integer</span></td><td>1</td><td>Page number</td></tr>
+        <tr><td>search</td><td><span class="type-tag">string</span></td><td></td><td>Search by patient name</td></tr>
+        <tr><td>ordering</td><td><span class="type-tag">string</span></td><td></td><td>Sort field e.g. <code>patient__name</code></td></tr>
+      </table>
+
+      <h3>Response — 200</h3>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre>{
+  "count": 94,
+  "next": "...?page=2",
+  "previous": null,
+  "results": [
+    {
+      "patient": {
+        "id": "d65391e5-4cbd-41e0-82e9-2c2d1fab2e12",
+        "name": "Ahmed Almusarawy",
+        "devices": [
+          {
+            "status": "Delivered",
+            "device": {
+              "id": "348d835e-...",
+              "name": "Tenovi BPM - L",
+              "hardware_uuid": "3D4852AA8BE2",
+              "sensor_code": "10",
+              "sensor_id": "",
+              "device_type": "7ffa3c62-...",
+              "model_number": ""
+            },
+            "id": "ceb82000-...",
+            "module": "RPM"          <span style="color:#8b949e">// "RPM" or "RTM"</span>
+          }
+        ],
+        "has_alert": false,
+        "phone_number": "",
+        "sms_opt_in": true,
+        "insurance_provider": null,
+        "enrolled_in_ccm": false
+      },
+      "modified": "2026-05-08T22:09:30.232847Z",
+      "consent_obtained": true,
+      "status": "AC",
+      "ordering_physician": "Hani",
+      "health_condition": "hypertension",
+      "care_manager": "",
+      "iccd_code": "",
+      "review_time": 0,                       <span style="color:#8b949e">// seconds reviewed this month</span>
+      "number_of_measurements": 0,
+      "last_reviewed_at": null,
+      "last_measurement_at": null,
+      "last_live_interaction": null,
+      "date_of_service_99453": null,
+      "date_of_service_99454": null,
+      "setup_call_required": false
+    }
+  ]
+}</pre>
+      </div>
+
+      <h3>Python — Get all active patients across all facilities</h3>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre>import urllib.request, json
+
+def api_get(url, token):
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Token {token}", "Accept": "application/json"
+    })
+    return json.load(urllib.request.urlopen(req))
+
+token = get_token()
+facilities = api_get("https://api2.tenovi.com/clients/rpmcares/facilities/", token)
+
+all_patients = []
+for facility in facilities:
+    fid   = facility["id"]
+    fname = facility["name"]
+    url   = f"https://api2.tenovi.com/clients/rpmcares/rpm/facilities/{fid}/patients/?status=AC&amp;page_size=500"
+    data  = api_get(url, token)
+    for p in data["results"]:
+        p["clinic_name"] = fname   <span style="color:#8b949e">  # attach clinic name</span>
+        all_patients.append(p)
+
+print(f"Total active patients: {len(all_patients)}")
+for p in all_patients:
+    print(f"  [{p['clinic_name']}] {p['patient']['name']} — {p['patient']['devices'][0]['module'] if p['patient']['devices'] else 'No device'}")</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CLIENT DEVICES -->
+<section id="ep-devices">
+  <h2>GET /data/client-devices/</h2>
+  <div class="endpoint-card">
+    <div class="endpoint-header">
+      <span class="method-pill pill-get">GET</span>
+      <span class="endpoint-path">https://api2.tenovi.com/clients/rpmcares/data/client-devices/</span>
+      <span class="endpoint-summary">List all devices across account</span>
+    </div>
+    <div class="endpoint-body">
+      <p>Returns all devices registered in the account (743 total). Includes connection status, last measurement, and linked patient.</p>
+
+      <h3>Auth</h3>
+      <p><code>Authorization: Token &lt;token&gt;</code></p>
+
+      <h3>Query Parameters</h3>
+      <table>
+        <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+        <tr><td>device_status</td><td><span class="type-tag">string</span></td><td><code>Connected</code> or <code>Disconnected</code></td></tr>
+        <tr><td>page_size</td><td><span class="type-tag">integer</span></td><td>Results per page</td></tr>
+        <tr><td>page</td><td><span class="type-tag">integer</span></td><td>Page number</td></tr>
+      </table>
+
+      <h3>Response fields</h3>
+      <table>
+        <tr><th>Field</th><th>Description</th></tr>
+        <tr><td>id</td><td>Device enrollment UUID</td></tr>
+        <tr><td>device</td><td>Device object — includes <code>hardware_uuid</code> (MAC), <code>name</code>, <code>sensor_code</code></td></tr>
+        <tr><td>device.hardware_uuid</td><td>Device MAC address (e.g. <code>3394E745DEE9</code>) — same as HWI gateway_uuid</td></tr>
+        <tr><td>gateway_id</td><td>Gateway UUID (often empty — use <code>device.hardware_uuid</code> instead)</td></tr>
+        <tr><td>module</td><td><code>"RPM"</code> or <code>"RTM"</code></td></tr>
+        <tr><td>patient</td><td>Object with patient <code>id</code> (UUID), <code>name</code>, <code>facility_name</code>, <code>phone_number</code>, <code>external_id</code></td></tr>
+        <tr><td>connected</td><td>Boolean</td></tr>
+        <tr><td>connected_on</td><td>ISO timestamp</td></tr>
+        <tr><td>last_measurement</td><td>ISO timestamp of most recent reading (timestamp only — no values)</td></tr>
+        <tr><td>status</td><td>Device status string</td></tr>
+      </table>
+
+      <div class="alert alert-info">ℹ️ <code>last_measurement</code> gives the timestamp of the most recent reading but no values. To get actual measurement values (systolic, glucose, etc.) use <a href="#ep-measurements">GET /data/patients/{id}/measurements/</a>.</div>
+
+      <h3>Device type breakdown (743 total)</h3>
+      <table>
+        <tr><th>Device Name</th><th>Count</th><th>Notes</th></tr>
+        <tr><td>Tenovi Pillbox</td><td>475</td><td>RTM module — medication adherence, no vitals readings</td></tr>
+        <tr><td>Tenovi BPM - L</td><td>232</td><td>Blood pressure monitor (large cuff) — RPM</td></tr>
+        <tr><td>PatchRX PatchCap</td><td>17</td><td>Medication cap sensor — RTM</td></tr>
+        <tr><td>Tenovi BPM - S</td><td>8</td><td>Blood pressure monitor (small cuff) — RPM</td></tr>
+        <tr><td>Tenovi Glucometer</td><td>7</td><td>Blood glucose meter — RPM</td></tr>
+        <tr><td>Tenovi Cellular BPM - L</td><td>2</td><td>Cellular blood pressure monitor — RPM</td></tr>
+        <tr><td>Tenovi Scale</td><td>1</td><td>Weight scale — RPM</td></tr>
+        <tr><td>Tenovi Pulse Ox</td><td>1</td><td>Pulse oximeter — RPM</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- PATIENT MEASUREMENTS -->
+<section id="ep-measurements">
+  <h2>GET /data/patients/{id}/measurements/</h2>
+  <div class="endpoint-card">
+    <div class="endpoint-header">
+      <span class="method-pill pill-get">GET</span>
+      <span class="endpoint-path">https://api2.tenovi.com/clients/rpmcares/data/patients/{patient_uuid}/measurements/</span>
+      <span class="endpoint-summary">Historical measurement readings for a patient</span>
+    </div>
+    <div class="endpoint-body">
+      <p>Returns paginated measurement history for a single patient. Filter by <code>metric__id</code> to get a specific reading type (blood pressure, glucose, etc.). Discovered via browser network inspection of <code>app.tenovi.com</code> — this is the only way to pull historical vitals for RPM patients.</p>
+
+      <div class="alert alert-warn">⚠️ Auth is <strong>Token</strong> (RPM login) — NOT the HWI Api-Key. One request per patient per metric type. With ~35 active Tenovi patients and 2 metrics, that is ~70 API calls per run.</div>
+
+      <h3>Auth</h3>
+      <p><code>Authorization: Token &lt;token&gt;</code> — from <code>POST /auth/</code> login.</p>
+
+      <h3>Path Parameters</h3>
+      <table>
+        <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+        <tr><td>patient_uuid</td><td><span class="type-tag">uuid</span></td><td>Patient UUID from <code>GET /rpm/facilities/{id}/patients/</code></td></tr>
+      </table>
+
+      <h3>Query Parameters</h3>
+      <table>
+        <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+        <tr><td>metric__id</td><td><span class="type-tag">uuid</span></td><td>Metric type UUID — see <a href="#metric-ids">Metric IDs</a> table. Omit to get all metrics.</td></tr>
+        <tr><td>timestamp__gte</td><td><span class="type-tag">string</span></td><td>Start datetime (inclusive), format: <code>2026-01-01T0:0:0</code></td></tr>
+        <tr><td>timestamp__lt</td><td><span class="type-tag">string</span></td><td>End datetime (exclusive), same format</td></tr>
+        <tr><td>page_size</td><td><span class="type-tag">integer</span></td><td>Results per page. Use <code>100</code> for bulk fetching.</td></tr>
+        <tr><td>page</td><td><span class="type-tag">integer</span></td><td>Page number. Paginate using <code>next</code> field in response.</td></tr>
+      </table>
+
+      <h3>Response — 200</h3>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre>{
+  "count": 23,
+  "next": "https://api2.tenovi.com/clients/rpmcares/data/patients/.../measurements/?page=2&amp;...",
+  "previous": null,
+  "results": [
+    {
+      "id": "b1eb446c-03fe-493a-8d2a-efa989dc5e0e",
+      "value": "110.00",           <span style="color:#8b949e">// primary value — systolic mmHg for BP, mg/dL for glucose</span>
+      "secondary_value": "81.00",  <span style="color:#8b949e">// diastolic mmHg for BP, "0.00" for glucose/pulse</span>
+      "hardware_uuid": "9DE94BCAB7F6",
+      "timestamp": "2025-12-30T21:42:00.000000Z",
+      "original_timestamp": "2025-12-30T21:42:00.000000Z",
+      "timezone_offset": -8,
+      "measurement_metric": {
+        "id": "cf2166eb-9e8f-4445-ac6d-bbc6abd85e87",
+        "name": "blood_pressure",
+        "type": "PH",
+        "primary_units": "mmHg",
+        "primary_display_name": "Systolic",
+        "secondary_units": "mmHg",
+        "secondary_display_name": "Diastolic"
+      },
+      "metric_name_read_only": "blood_pressure",
+      "device_name": "Tenovi BPM - L",
+      "client_device": {
+        "device": { "name": "Tenovi BPM - L", "hardware_uuid": "9DE94BCAB7F6", ... },
+        "status": "Connected",
+        "connected_on": "2025-11-11T16:48:12Z"
+      },
+      "patient": "309670cf-32f9-4308-a180-c86871d73038",
+      "anomalous_timestamp": false,
+      "alert_triggered": false
+    }
+  ]
+}</pre>
+      </div>
+
+      <h3>n8n Code Node — Fetch readings for all Tenovi patients</h3>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        <pre><span style="color:#8b949e">// Paste as section 2 of Fetch Readings node (keep SmartMeter section 1 unchanged)</span>
+const TENOVI_BASE        = 'https://api2.tenovi.com/clients/rpmcares';
+const TENOVI_METRIC_BP   = 'cf2166eb-9e8f-4445-ac6d-bbc6abd85e87'; <span style="color:#8b949e">// blood_pressure</span>
+const TENOVI_METRIC_GLUC = '0375cc1b-9e67-49f3-952e-a5f51a88d1db'; <span style="color:#8b949e">// glucose</span>
+
+const TOKEN = $('Tenovi Login').first().json.tenoviToken;
+if (!TOKEN) throw new Error('No token from Tenovi Login node');
+const authHeaders = { 'Authorization': `Token ${TOKEN}`, 'Accept': 'application/json' };
+
+const tenoviPatients = $('Fetch All Patients').all()
+  .map(it => it.json)
+  .filter(p => p &amp;&amp; p.__source === 'tenovi' &amp;&amp; p.patientId);
+
+for (const patient of tenoviPatients) {
+  for (const metricId of [TENOVI_METRIC_BP, TENOVI_METRIC_GLUC]) {
+    let nextUrl = `${TENOVI_BASE}/data/patients/${patient.patientId}/measurements/` +
+      `?metric__id=${metricId}&amp;timestamp__gte=${dateStart}&amp;timestamp__lt=${dateEnd}&amp;page_size=100`;
+    while (nextUrl) {
+      const resp = await this.helpers.httpRequest({ method: 'GET', url: nextUrl, headers: authHeaders });
+      const pData = typeof resp === 'string' ? JSON.parse(resp) : resp;
+      for (const m of pData.results || []) {
+        const name = m.measurement_metric?.name || '';
+        const v1 = parseFloat(m.value), v2 = parseFloat(m.secondary_value);
+        const base = { patient_id: patient.patientId, timestamp: m.timestamp,
+          date_recorded: m.timestamp, reading_id: `tenovi_${patient.patientId}_${m.timestamp}_${name}`,
+          __clinicName: patient.groupName, __source: 'tenovi' };
+        if (name === 'blood_pressure')
+          allRecords.push({ ...base, device_type:'blood_pressure', reading_type:'blood_pressure',
+            systolic: v1, systolic_mmhg: v1, diastolic: v2, diastolic_mmhg: v2 });
+        else if (name === 'glucose')
+          allRecords.push({ ...base, device_type:'blood_glucose', reading_type:'blood_glucose',
+            measurement_type:'RBS', glucose: v1, blood_glucose_mgdl: v1, before_meal: false });
+      }
+      nextUrl = (pData.next &amp;&amp; pData.results?.length === 100) ? pData.next : null;
+    }
+  }
+}</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- METRIC IDS REFERENCE -->
+<section id="metric-ids">
+  <h2>Metric IDs</h2>
+  <p>These UUIDs are global constants for the Tenovi platform — the same across all accounts. Pass them as <code>metric__id</code> in the <a href="#ep-measurements">measurements endpoint</a>.</p>
+  <table>
+    <tr><th>Metric Name</th><th>UUID</th><th><code>value</code> field</th><th><code>secondary_value</code> field</th><th>Units</th></tr>
+    <tr><td><code>blood_pressure</code></td><td class="fac-id">cf2166eb-9e8f-4445-ac6d-bbc6abd85e87</td><td>Systolic</td><td>Diastolic</td><td>mmHg / mmHg</td></tr>
+    <tr><td><code>glucose</code></td><td class="fac-id">0375cc1b-9e67-49f3-952e-a5f51a88d1db</td><td>Blood glucose</td><td>0.00 (unused)</td><td>mg/dL</td></tr>
+    <tr><td><code>pulse</code></td><td class="fac-id">5fed4750-a864-4b27-9577-8641f193431d</td><td>Heart rate</td><td>0.00 (unused)</td><td>bpm</td></tr>
+    <tr><td><code>irregular_heartbeat</code></td><td class="fac-id">9127e790-a1e9-49c8-ba58-7a53d46c9d12</td><td>1.0 = detected</td><td>0.00 (unused)</td><td>Event</td></tr>
+    <tr><td><code>battery_percentage</code></td><td class="fac-id">7af8455a-f7ac-4545-8f2b-ea186a649f2b</td><td>Battery level</td><td>0.00 (unused)</td><td>%</td></tr>
+  </table>
+  <div class="alert alert-info">ℹ️ For the n8n workflow, only <code>blood_pressure</code> and <code>glucose</code> are fetched — these are the two metrics used by Detect Anomalies and Check Missing Readings nodes. <code>pulse</code> is returned alongside blood pressure readings automatically (same device); fetch it separately if needed.</div>
+</section>
+
+<!-- DEVICE TYPES REFERENCE -->
+<section id="device-types">
+  <h2>Device Types</h2>
+  <p>Device type names as returned by <code>GET /data/client-devices/</code> in the <code>device.name</code> field. Verified count as of June 2026 (743 total).</p>
+  <table>
+    <tr><th>Device Name</th><th>Count</th><th>Module</th><th>Metrics produced</th></tr>
+    <tr><td>Tenovi Pillbox</td><td>475</td><td>RTM</td><td>Medication adherence events only — no vitals</td></tr>
+    <tr><td>Tenovi BPM - L</td><td>232</td><td>RPM</td><td><code>blood_pressure</code>, <code>pulse</code>, <code>irregular_heartbeat</code></td></tr>
+    <tr><td>PatchRX PatchCap</td><td>17</td><td>RTM</td><td>Medication cap open/close events</td></tr>
+    <tr><td>Tenovi BPM - S</td><td>8</td><td>RPM</td><td><code>blood_pressure</code>, <code>pulse</code>, <code>irregular_heartbeat</code></td></tr>
+    <tr><td>Tenovi Glucometer</td><td>7</td><td>RPM</td><td><code>glucose</code></td></tr>
+    <tr><td>Tenovi Cellular BPM - L</td><td>2</td><td>RPM</td><td><code>blood_pressure</code>, <code>pulse</code></td></tr>
+    <tr><td>Tenovi Scale</td><td>1</td><td>RPM</td><td>Weight (metric ID not yet confirmed)</td></tr>
+    <tr><td>Tenovi Pulse Ox</td><td>1</td><td>RPM</td><td>SpO2 / pulse (metric IDs not yet confirmed)</td></tr>
+  </table>
+</section>
+
+<!-- HWI OVERVIEW -->
+<section id="hwi-overview">
+  <h2>HWI API Overview</h2>
+  <div class="alert alert-warn">⚠️ The HWI API contains <strong>hardware data only</strong>. It does NOT have clinics, facility names, the clinical patient roster, or any measurement history. <strong>Never use HWI endpoints to fetch patient readings</strong> — HWI patient IDs (16 records) are completely separate from RPM patient UUIDs.</div>
+  <p>Base URL: <code>https://api2.tenovi.com/clients/rpmcares/hwi/</code></p>
+  <p>Auth header: <code>Authorization: Api-Key hwjFc4nX.lU6gFC35IfZ39QgnsZZL5HNb9OBPSgZJ</code></p>
+  <div class="alert alert-info">ℹ️ The Swagger spec referenced in Tenovi's docs at <code>/hwi/schema/swagger-ui/</code> is only a frontend route on <code>app.tenovi.com</code> (which is a SPA). It is not accessible via the API. Exhaustive probing of <code>api2.tenovi.com</code> confirmed there is no <code>/hwi/measurements/</code>, <code>/hwi/readings/</code>, or any measurement sub-endpoint in the HWI API.</div>
+  <p>Known counts: <strong>589 gateways</strong>, <strong>16 HWI patient records</strong>. Active endpoints: <code>/hwi-patients/</code> and <code>/hwi-gateways/</code> only.</p>
+</section>
+
+<!-- HWI PATIENTS -->
+<section id="ep-hwi-patients">
+  <h2>GET /hwi-patients/</h2>
+  <div class="endpoint-card">
+    <div class="endpoint-header">
+      <span class="method-pill pill-get">GET</span>
+      <span class="endpoint-path">https://api2.tenovi.com/clients/rpmcares/hwi/hwi-patients/</span>
+      <span class="endpoint-summary">Hardware patient registry (16 records)</span>
+    </div>
+    <div class="endpoint-body">
+      <p>Returns the HWI patient registry — only 16 records, unrelated to the 94+ clinical patients. The <code>clinic_name</code> field exists but is <code>null</code> for all records.</p>
+      <h3>Auth</h3><p><code>Authorization: Api-Key hwjFc4nX.lU6gFC35IfZ39QgnsZZL5HNb9OBPSgZJ</code></p>
+      <h3>Query Parameters</h3>
+      <table>
+        <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+        <tr><td>page_size</td><td><span class="type-tag">integer</span></td><td>Max results per page</td></tr>
+        <tr><td>page</td><td><span class="type-tag">integer</span></td><td>Page number</td></tr>
+        <tr><td>search</td><td><span class="type-tag">string</span></td><td>Search by name/id</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- HWI GATEWAYS -->
+<section id="ep-hwi-gateways">
+  <h2>GET /hwi-gateways/</h2>
+  <div class="endpoint-card">
+    <div class="endpoint-header">
+      <span class="method-pill pill-get">GET</span>
+      <span class="endpoint-path">https://api2.tenovi.com/clients/rpmcares/hwi/hwi-gateways/</span>
+      <span class="endpoint-summary">All gateways (589 total)</span>
+    </div>
+    <div class="endpoint-body">
+      <p>Returns all hardware gateways. 589 total. Fields: <code>gateway_uuid</code>, <code>last_signal_strength</code>, <code>last_measurement</code>, <code>shipped_on</code>, <code>assigned_on</code>.</p>
+      <h3>Auth</h3><p><code>Authorization: Api-Key hwjFc4nX.lU6gFC35IfZ39QgnsZZL5HNb9OBPSgZJ</code></p>
+    </div>
+  </div>
+</section>
+
+<!-- FACILITIES LIST -->
+<section id="facilities-list">
+  <h2>All Facilities (Clinics)</h2>
+  <p>Complete list with IDs. Use the ID in <code>GET /rpm/facilities/{id}/patients/</code>.</p>
+  <table class="fac-table">
+    <tr><th>Facility Name</th><th>ID</th><th>Active</th><th>Total</th></tr>
+    <tr><td>Healthy Me Clinic PLLC</td><td class="fac-id">66c9af32-9c90-45b2-a3dd-a30f9c02a046</td><td><span class="count-pill">76</span></td><td>94</td></tr>
+    <tr><td>Premier Health Family Medicine, PLLC</td><td class="fac-id">5011afbd-0858-4ba0-b958-3c46e525556f</td><td><span class="count-pill">0</span></td><td>126</td></tr>
+    <tr><td>Siminibe Patrick Moneke</td><td class="fac-id">84b220c9-fea0-4dd3-9c78-75fe3c3051e2</td><td><span class="count-pill">22</span></td><td>35</td></tr>
+    <tr><td>Texas Spine & Pain MD PLLC</td><td class="fac-id">5ccb8fb6-09df-47d2-9ac8-34215c5d6eba</td><td><span class="count-pill">0</span></td><td>27</td></tr>
+    <tr><td>Heartful Cardiology</td><td class="fac-id">ca853878-3b2d-4275-81b3-adfdb968e403</td><td><span class="count-pill">6</span></td><td>8</td></tr>
+    <tr><td>Americare Medical Group</td><td class="fac-id">a0caa101-4a8e-4797-b957-1071ee7bc758</td><td><span class="count-pill">0</span></td><td>10</td></tr>
+    <tr><td>Advanced Care and Wellness Center</td><td class="fac-id">f97083f9-0bd3-43a2-83d0-aae9c86b7cf3</td><td><span class="count-pill">3</span></td><td>10</td></tr>
+    <tr><td>LTH Family Medicine</td><td class="fac-id">7d02608c-dff2-41aa-bb05-9890e5892643</td><td><span class="count-pill">0</span></td><td>5</td></tr>
+    <tr><td>Awesome Care</td><td class="fac-id">38cf84f7-3e26-42c4-bebf-6ec814224bd3</td><td><span class="count-pill">4</span></td><td>9</td></tr>
+    <tr><td>Arlington</td><td class="fac-id">eb7fd343-2ec7-46d7-83d4-34e102c35cc5</td><td><span class="count-pill">0</span></td><td>4</td></tr>
+    <tr><td>Prime Primary Care</td><td class="fac-id">19980cdf-63f6-4bef-890b-3c256c9afa00</td><td><span class="count-pill">0</span></td><td>4</td></tr>
+    <tr><td>RPMCares Demo</td><td class="fac-id">26e59388-bd13-45b2-8bab-9e584a1e1712</td><td><span class="count-pill">1</span></td><td>7</td></tr>
+    <tr><td>Comprehensive Neurology Specialists PLLC</td><td class="fac-id">ebdc66bc-cd91-4b8d-b1fd-088b8d5e191f</td><td><span class="count-pill">0</span></td><td>1</td></tr>
+    <tr><td>Quantum Care</td><td class="fac-id">b951c058-7f47-425b-bdd5-0a2f4dc82265</td><td><span class="count-pill">1</span></td><td>1</td></tr>
+    <tr><td>Tampa</td><td class="fac-id">cf7dae6d-14f8-4c9d-a43b-ca5a22baa536</td><td><span class="count-pill">0</span></td><td>0</td></tr>
+    <tr><td>Traveling Doctors</td><td class="fac-id">46199486-24bf-48f8-b5bb-cbfe5a11f9e1</td><td><span class="count-pill">0</span></td><td>0</td></tr>
+    <tr><td>Citywide House call Clinic</td><td class="fac-id">e139ffdc-6bd1-4589-8d26-e5cc5d7c02a2</td><td><span class="count-pill">0</span></td><td>0</td></tr>
+    <tr><td>Family Health and Wellness</td><td class="fac-id">3363c630-c1ff-45a3-996f-d698c3323b1b</td><td><span class="count-pill">0</span></td><td>0</td></tr>
+    <tr><td>Neurology Care</td><td class="fac-id">c3dad479-23ca-422f-a9bf-397a3123169e</td><td><span class="count-pill">0</span></td><td>0</td></tr>
+    <tr><td>Big Sky Neurology</td><td class="fac-id">b1a8e33c-891c-4e75-9fbe-dc9f6d70f481</td><td><span class="count-pill">0</span></td><td>0</td></tr>
+    <tr><td>Texas Lung Specialist</td><td class="fac-id">3edb1f3d-f0a3-4870-b79f-307759c13646</td><td><span class="count-pill">0</span></td><td>0</td></tr>
+    <tr><td>COMPREHENSIVE NEUROLOGY CENTER, PA</td><td class="fac-id">200cd958-c80a-4f98-ad2d-0078d8f5051d</td><td><span class="count-pill">0</span></td><td>0</td></tr>
+    <tr><td>North Texas Movement Disorders Institute</td><td class="fac-id">11f2b2c5-4064-424d-9f31-f28199f2f93f</td><td><span class="count-pill">0</span></td><td>0</td></tr>
+    <tr><td>Prime Care 360</td><td class="fac-id">3b877282-2594-4707-84a8-58661fc68718</td><td><span class="count-pill">0</span></td><td>0</td></tr>
+  </table>
+</section>
+
+<!-- STATUS CODES -->
+<section id="status-codes">
+  <h2>Patient Status Codes</h2>
+  <table>
+    <tr><th>Code</th><th>Label</th><th>Description</th></tr>
+    <tr><td><code>AC</code></td><td>Active</td><td>Patient is actively enrolled and monitored</td></tr>
+    <tr><td><code>PE</code></td><td>Pending</td><td>Awaiting consent or setup completion</td></tr>
+    <tr><td><code>HO</code></td><td>Hold</td><td>Temporarily paused</td></tr>
+    <tr><td><code>DI</code></td><td>Discharged</td><td>No longer in the program</td></tr>
+    <tr><td><code>DE</code></td><td>Declined</td><td>Patient declined enrollment</td></tr>
+    <tr><td>(empty)</td><td>All</td><td>Omit <code>status</code> param to get all statuses</td></tr>
+  </table>
+</section>
+
+<!-- N8N -->
+<section id="n8n">
+  <h2>n8n Workflow Blueprint</h2>
+  <p>Current production architecture (rpmcares RPM Agent). Tenovi runs in parallel with SmartMeter — all nodes handle both sources.</p>
+
+  <h3>Phase 1 — Login &amp; Patients</h3>
+  <div class="flow">
+    <div class="flow-step"><div class="flow-num">1</div><div class="flow-content"><strong>Tenovi Login (Code Node)</strong><br><span style="color:var(--muted)">Pure-JS TOTP (no <code>require('crypto')</code> — n8n sandbox blocks it). Computes OTP → POSTs to <code>/auth/</code> → outputs <code>{ tenoviToken }</code>. Reusable — referenced by downstream nodes via <code>$('Tenovi Login').first().json.tenoviToken</code>.</span></div></div>
+    <hr class="flow-line">
+    <div class="flow-step"><div class="flow-num">2</div><div class="flow-content"><strong>Fetch All Patients (Code Node, executeOnce: true)</strong><br><span style="color:var(--muted)">Section 1: SmartMeter per-clinic pagination. Section 2: Tenovi — <code>GET /facilities/</code> → for each facility <code>GET /rpm/facilities/{id}/patients/?status=AC&amp;page_size=500</code> with <code>next</code>-based pagination. Reads token from <em>Tenovi Login</em> node. Outputs unified shape: <code>{ patientId, patientName, groupName, phone, status, __source }</code>. Phones normalized to E.164 (<code>+1XXXXXXXXXX</code>).</span></div></div>
+  </div>
+
+  <h3>Phase 2 — Readings</h3>
+  <div class="flow">
+    <div class="flow-step"><div class="flow-num">3</div><div class="flow-content"><strong>Fetch Readings &amp; Alerts (Code Node)</strong><br><span style="color:var(--muted)">Section 1: SmartMeter — POST <code>/api/readings</code> per clinic (blood_glucose, blood_pressure). Section 2: Tenovi — for each patient with <code>__source==='tenovi'</code>, two calls to <code>GET /data/patients/{uuid}/measurements/</code>: once with <code>metric__id=cf2166eb...</code> (blood_pressure) and once with <code>metric__id=0375cc1b...</code> (glucose). Uses RPM Token auth. Output shape matches SmartMeter: <code>{ patient_id, systolic, systolic_mmhg, diastolic, diastolic_mmhg, timestamp, reading_id, __clinicName, __source }</code> for BP; same pattern for glucose.</span></div></div>
+  </div>
+
+  <h3>Key implementation notes</h3>
+  <table>
+    <tr><th>Topic</th><th>Detail</th></tr>
+    <tr><td>TOTP in n8n</td><td><code>require('crypto')</code> is silently blocked in n8n Code Node sandbox — use the pure-JS SHA1/HMAC-SHA1 implementation from the TOTP section above.</td></tr>
+    <tr><td>Pagination</td><td>Both patients and measurements use <code>next</code> field (absolute URL). Stop when <code>pData.next</code> is null — do NOT stop on <code>results.length &lt; page_size</code> (server ignores large page_size for patients).</td></tr>
+    <tr><td>Token invalidation</td><td>Each new login invalidates all prior tokens. Only one login per workflow run. Do not log in inside a loop.</td></tr>
+    <tr><td>Patient IDs</td><td>Tenovi RPM patients have UUID IDs (<code>74db2a23-...</code>). These are the canonical IDs for all RPM API calls. HWI patient IDs (16 records) are unrelated — never mix them.</td></tr>
+    <tr><td>Phone normalization</td><td>Tenovi returns phones as <code>469-230-6753</code> (no country code). Normalize: strip non-digits → if 10 digits prepend <code>+1</code>.</td></tr>
+    <tr><td>Measurement reading_id</td><td>Tenovi measurements have a UUID <code>id</code> field — use it directly as <code>reading_id</code> for dedup in AuditLog.</td></tr>
+  </table>
+
+  <div class="alert alert-success">
+    ✅ With both phases complete: ~2086 total patients (SmartMeter + Tenovi), readings for all active devices, anomaly detection and missing-reading reminders work for both sources with the same downstream nodes.
+  </div>
+</section>
+
+</main>
+
+<script>
+function switchTab(group, lang) {
+  document.querySelectorAll(`[id^="${group}-"]`).forEach(el => el.classList.remove('active'));
+  document.querySelectorAll(`#${group}-tabs .lang-tab`).forEach(el => el.classList.remove('active'));
+  document.getElementById(`${group}-${lang}`).classList.add('active');
+  event.target.classList.add('active');
+}
+
+function copyCode(btn) {
+  const pre = btn.nextElementSibling;
+  navigator.clipboard.writeText(pre.innerText).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+// Active sidebar link on scroll
+const sections = document.querySelectorAll('section[id]');
+const links = document.querySelectorAll('#sidebar a');
+window.addEventListener('scroll', () => {
+  let cur = '';
+  sections.forEach(s => { if (window.scrollY >= s.offsetTop - 80) cur = s.id; });
+  links.forEach(l => {
+    l.classList.remove('active');
+    if (l.getAttribute('href') === '#' + cur) l.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>

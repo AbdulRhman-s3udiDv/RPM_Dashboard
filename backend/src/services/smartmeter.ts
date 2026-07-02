@@ -1,4 +1,27 @@
-const BASE = "https://api.smartmeterrpm.com";
+import { env } from "../env";
+
+const BASE = env.SMARTMETER_BASE_URL ?? "https://api.smartmeterrpm.com";
+
+// Limits concurrent outbound HTTP calls — SmartMeter rate-limits aggressive parallelism.
+async function pLimit<T>(
+  tasks: Array<() => Promise<T>>,
+  concurrency: number,
+): Promise<PromiseSettledResult<T>[]> {
+  const results: PromiseSettledResult<T>[] = new Array(tasks.length);
+  let idx = 0;
+  async function worker() {
+    while (idx < tasks.length) {
+      const i = idx++;
+      try {
+        results[i] = { status: "fulfilled", value: await tasks[i]() };
+      } catch (reason) {
+        results[i] = { status: "rejected", reason };
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
+  return results;
+}
 
 // ── JWT cache (tokens expire in 30 min; refresh after 25) ─────────────────
 const tokenCache = new Map<string, { jwt: string; expiresAt: number }>();
@@ -79,11 +102,10 @@ function currentMonthRange() {
   };
 }
 
-// 60-day window to capture the most recently closed billing period
-function billingRange() {
+function billingRange(days = 60) {
   const now = new Date();
   const start = new Date(now);
-  start.setDate(start.getDate() - 60);
+  start.setDate(start.getDate() - days);
   return { start: isoDate(start), end: isoDate(now) };
 }
 
@@ -136,6 +158,83 @@ async function fetchReadingsCompliance(apiKey: string): Promise<number> {
   return [...daysByPatient.values()].filter((days) => days.size >= 16).length;
 }
 
+// ── Patient list (for sync) ────────────────────────────────────────────────
+
+export type SmartMeterPatientItem = {
+  patient_id: number;
+  first_name?: string;
+  last_name?: string;
+  dob?: string;
+  sex?: string;
+  phone?: string;
+  insurance_type?: string;
+  primary_diagnosis?: string;
+  language?: string;
+};
+
+/** Fetches ALL patients from a SmartMeter clinic (handles pagination). */
+export async function listSmartMeterPatients(
+  apiKey: string,
+): Promise<SmartMeterPatientItem[]> {
+  const all: SmartMeterPatientItem[] = [];
+  let page = 1;
+  while (true) {
+    const res = await withRetry(
+      () => smGet<{ data: SmartMeterPatientItem[] }>(apiKey, `/api/patients?page=${page}&size=100`),
+      `patients p${page}`,
+    );
+    const batch = res.data ?? [];
+    all.push(...batch);
+    if (batch.length < 100) break;
+    page++;
+    if (page > 100) break; // safety cap
+  }
+  return all;
+}
+
+// ── Patient enrollment ─────────────────────────────────────────────────────
+
+export async function enrollSmartMeterPatient(
+  apiKey: string,
+  data: {
+    firstName: string;
+    lastName: string;
+    dob: string;
+    sex: "M" | "F";
+    phone?: string;
+    insurance?: string;
+    diagnosis?: string;
+    language?: string;
+  },
+): Promise<{ patientId: string }> {
+  const jwt = await getJwt(apiKey);
+  const res = await fetchWithTimeout(`${BASE}/api/patients`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      first_name: data.firstName,
+      last_name: data.lastName,
+      dob: data.dob,
+      sex: data.sex,
+      phone: data.phone ?? "",
+      insurance_type: data.insurance ?? "",
+      primary_diagnosis: data.diagnosis ?? "",
+      language: data.language ?? "EN",
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`SmartMeter enroll patient → ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as any;
+  const patientId = json?.data?.patient_id ?? json?.data?.id ?? json?.id;
+  if (patientId == null) throw new Error("SmartMeter patient creation returned no ID");
+  return { patientId: String(patientId) };
+}
+
 // ── per-clinic fetch ───────────────────────────────────────────────────────
 type ClinicRaw = {
   name: string;
@@ -150,8 +249,8 @@ type ClinicRaw = {
   topAlerts: AlertItem[];
 };
 
-async function fetchClinic(name: string, apiKey: string): Promise<ClinicRaw> {
-  const { start, end } = billingRange();
+async function fetchClinic(name: string, apiKey: string, days: number): Promise<ClinicRaw> {
+  const { start, end } = billingRange(days);
 
   const [patientsRes, readingsRes, alertsRes, billingRes, worklistRes] = await Promise.allSettled([
     fetchPatientCount(apiKey, name),
@@ -219,7 +318,9 @@ export type SmartMeterSummary = {
 // ── main export ────────────────────────────────────────────────────────────
 export async function getSmartMeterSummary(
   clinics: { name: string; apiKey: string }[],
+  options: { days?: number } = {},
 ): Promise<SmartMeterSummary> {
+  const days = options.days ?? 60;
   if (clinics.length === 0) {
     return {
       totalPatients: 0, unreadAlerts: 0, openTasks: 0,
@@ -228,8 +329,10 @@ export async function getSmartMeterSummary(
     };
   }
 
-  const results = await Promise.allSettled(
-    clinics.map((c) => withRetry(() => fetchClinic(c.name, c.apiKey), c.name)),
+  // Process max 4 clinics concurrently — avoids overwhelming SmartMeter API
+  const results = await pLimit(
+    clinics.map((c) => () => withRetry(() => fetchClinic(c.name, c.apiKey, days), c.name)),
+    4,
   );
 
   const ok = results
