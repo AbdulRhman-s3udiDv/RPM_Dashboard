@@ -1,10 +1,11 @@
 import { useRouter } from 'expo-router';
 import {
-  Activity, ChevronDown, Plus, RefreshCw, Search, User, X,
+  Activity, ChevronDown, Plus, RefreshCw, Search, Trash2, User, X,
 } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   KeyboardAvoidingView,
   Modal,
@@ -55,6 +56,23 @@ function riskTone(r: string): 'success' | 'info' | 'warning' | 'critical' {
   if (r === 'medium') return 'info';
   if (r === 'high')   return 'warning';
   return 'critical';
+}
+
+// Inserts slashes as user types so they only need to enter digits: 01011990 → 01/01/1990
+function formatDobInput(raw: string): string {
+  const d = raw.replace(/\D/g, '').slice(0, 8);
+  if (d.length <= 2) return d;
+  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
+  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+}
+
+function dobToIso(display: string): string {
+  const [mm = '', dd = '', yyyy = ''] = display.split('/');
+  const m = parseInt(mm, 10), d = parseInt(dd, 10), y = parseInt(yyyy, 10);
+  if (yyyy.length === 4 && m >= 1 && m <= 12 && d >= 1 && d <= 31 && y >= 1900 && y <= 2030) {
+    return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+  }
+  return '';
 }
 
 // ── ClinicPickerModal ──────────────────────────────────────────────────────
@@ -295,7 +313,13 @@ function EnrollModal({
   async function submit() {
     if (!form.firstName.trim() || !form.lastName.trim()) { setError('First Name and Last Name are required.'); return; }
     if (!form.clinicId) { setError('Please select a clinic.'); return; }
-    if (form.dob && !/^\d{4}-\d{2}-\d{2}$/.test(form.dob)) { setError('Date of birth must be YYYY-MM-DD.'); return; }
+    const dobIso = form.dob ? dobToIso(form.dob) : '';
+    if (form.system === 'smartmeter' && !dobIso) {
+      setError(form.dob
+        ? 'Please enter a valid date of birth (month 1–12, day 1–31, 4-digit year).'
+        : 'Date of birth is required for SmartMeter enrollment — enter as MM/DD/YYYY.');
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
@@ -304,7 +328,7 @@ function EnrollModal({
         system:            form.system,
         firstName:         form.firstName.trim(),
         lastName:          form.lastName.trim(),
-        dob:               form.dob.trim() || undefined,
+        dob:               dobIso || undefined,
         sex:               form.sex || undefined,
         program:           form.program,
         phone:             form.phone.trim() || undefined,
@@ -372,7 +396,15 @@ function EnrollModal({
                 </View>
               </View>
 
-              <EField label="Date of Birth" value={form.dob} onChangeText={(v) => set('dob', v)} placeholder="YYYY-MM-DD" colors={colors} />
+              <EField
+                label="Date of Birth"
+                required={form.system === 'smartmeter'}
+                value={form.dob}
+                onChangeText={(v) => set('dob', formatDobInput(v))}
+                placeholder="MM/DD/YYYY"
+                keyboard="phone-pad"
+                colors={colors}
+              />
               <ESegment label="Sex" options={[{ label: 'Male', value: 'M' }, { label: 'Female', value: 'F' }]} value={form.sex} onChange={(v) => set('sex', v as 'M' | 'F')} colors={colors} />
               <EField label="Phone" value={form.phone} onChangeText={(v) => set('phone', v)} placeholder="+1 555 000 0000" keyboard="phone-pad" colors={colors} />
               <ESegment
@@ -385,8 +417,8 @@ function EnrollModal({
 
               {form.system === 'smartmeter' && (
                 <>
-                  <EField label="Insurance Type" value={form.insurance} onChangeText={(v) => set('insurance', v)} placeholder="Medicare Part B" colors={colors} />
-                  <EField label="Primary Diagnosis" value={form.diagnosis} onChangeText={(v) => set('diagnosis', v)} placeholder="Hypertension" colors={colors} />
+                  <EField label="Insurance Type" value={form.insurance} onChangeText={(v) => set('insurance', v)} placeholder="e.g. Medicare, Medicaid, Private" colors={colors} />
+                  <EField label="Primary Diagnosis" value={form.diagnosis} onChangeText={(v) => set('diagnosis', v)} placeholder="e.g. Hypertension" colors={colors} />
                   <ESegment label="Language" options={[{ label: 'English', value: 'EN' }, { label: 'Spanish', value: 'ES' }, { label: 'Arabic', value: 'AR' }]} value={form.language} onChange={(v) => set('language', v as 'EN' | 'ES' | 'AR')} colors={colors} />
                 </>
               )}
@@ -427,9 +459,104 @@ function EnrollModal({
   );
 }
 
+// ── Delete patient modal ───────────────────────────────────────────────────
+
+function DeletePatientModal({
+  patient, token, onClose, onDeleted, colors,
+}: {
+  patient: Patient | null; token: string;
+  onClose: () => void; onDeleted: (id: string) => void; colors: any;
+}) {
+  const [password, setPassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!patient) return;
+    setPassword('');
+    setError('');
+  }, [patient]);
+
+  async function confirm() {
+    if (!patient) return;
+    if (!password) { setError('Enter your password to confirm.'); return; }
+    setDeleting(true);
+    setError('');
+    try {
+      await api.deletePatient(token, patient.id, password);
+      onDeleted(patient.id);
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Delete failed. Please try again.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <Modal visible={!!patient} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: '#00000060', justifyContent: 'center', padding: 24 }}>
+        <View style={[dm.card, { backgroundColor: colors.card }]}>
+          <View style={dm.iconWrap}>
+            <Trash2 size={24} color="#EF4444" strokeWidth={1.75} />
+          </View>
+          <Text style={[dm.title, { color: colors.text }]}>Delete Patient</Text>
+          <Text style={[dm.body, { color: colors.textSecondary }]}>
+            <Text style={{ fontWeight: '700', color: colors.text }}>{patient?.full_name}</Text>
+            {patient?.source === 'tenovi'
+              ? ' will be removed from the dashboard and discharged in Tenovi.'
+              : ' will be removed from the dashboard and set to Inactive in SmartMeter.'
+            }{'\n\n'}Enter your admin password to confirm.
+          </Text>
+          <TextInput
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Your password"
+            placeholderTextColor={colors.textSecondary + '80'}
+            secureTextEntry
+            autoCapitalize="none"
+            style={[dm.input, { color: colors.text, borderColor: error ? '#EF4444' : colors.border, backgroundColor: colors.surface }]}
+          />
+          {error ? <Text style={[dm.error, { color: '#EF4444' }]}>{error}</Text> : null}
+          <View style={dm.row}>
+            <Pressable onPress={onClose} style={[dm.btn, { borderColor: colors.border }]}>
+              <Text style={[dm.btnText, { color: colors.textSecondary }]}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              onPress={confirm}
+              disabled={deleting}
+              style={[dm.btn, { backgroundColor: deleting ? '#EF444480' : '#EF4444', borderColor: 'transparent' }]}>
+              {deleting
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <Text style={[dm.btnText, { color: '#fff' }]}>Delete</Text>}
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const dm = StyleSheet.create({
+  card:    { borderRadius: 20, padding: 24, gap: 12 },
+  iconWrap:{ width: 52, height: 52, borderRadius: 16, backgroundColor: '#EF444420', alignItems: 'center', justifyContent: 'center', alignSelf: 'center' },
+  title:   { fontSize: 18, fontWeight: '800', textAlign: 'center', letterSpacing: -0.3 },
+  body:    { fontSize: 14, lineHeight: 21, textAlign: 'center' },
+  input:   { borderWidth: StyleSheet.hairlineWidth, borderRadius: 10, padding: 12, fontSize: 15 },
+  error:   { fontSize: 12, textAlign: 'center' },
+  row:     { flexDirection: 'row', gap: 10, marginTop: 4 },
+  btn:     { flex: 1, borderWidth: StyleSheet.hairlineWidth, borderRadius: 12, paddingVertical: 13, alignItems: 'center', justifyContent: 'center' },
+  btnText: { fontSize: 14, fontWeight: '700' },
+});
+
 // ── Patient card ───────────────────────────────────────────────────────────
 
-function PatientCard({ patient, colors }: { patient: Patient; colors: any }) {
+function PatientCard({
+  patient, colors, canDelete, onDelete,
+}: {
+  patient: Patient; colors: any;
+  canDelete?: boolean; onDelete?: (p: Patient) => void;
+}) {
   const router = useRouter();
   const nameParts = patient.full_name.trim().split(' ');
   const initials  = ((nameParts[0]?.[0] ?? '') + (nameParts[nameParts.length - 1]?.[0] ?? '')).toUpperCase();
@@ -460,19 +587,29 @@ function PatientCard({ patient, colors }: { patient: Patient; colors: any }) {
             {patient.risk !== 'low' && <StatusPill tone={riskTone(patient.risk)}>{patient.risk}</StatusPill>}
           </View>
         </View>
-        <View style={cd.bottom}>
-          <View style={[cd.chip, { borderColor: colors.border }]}>
-            <Text style={[cd.chipText, { color: colors.text }]}>{patient.program}</Text>
+        <View style={[cd.bottom, { justifyContent: 'space-between' }]}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, flex: 1 }}>
+            <View style={[cd.chip, { borderColor: colors.border }]}>
+              <Text style={[cd.chipText, { color: colors.text }]}>{patient.program}</Text>
+            </View>
+            <View style={[cd.chip, { borderColor: colors.border }]}>
+              <Activity size={9} color={colors.textSecondary} />
+              <Text style={[cd.chipText, { color: colors.textSecondary }]}>
+                {patient.source === 'tenovi' ? 'Tenovi' : 'SmartMeter'}
+              </Text>
+            </View>
+            {patient.insurance_payer ? (
+              <Text style={[cd.meta, { color: colors.textSecondary }]} numberOfLines={1}>{patient.insurance_payer}</Text>
+            ) : null}
           </View>
-          <View style={[cd.chip, { borderColor: colors.border }]}>
-            <Activity size={9} color={colors.textSecondary} />
-            <Text style={[cd.chipText, { color: colors.textSecondary }]}>
-              {patient.source === 'tenovi' ? 'Tenovi' : 'SmartMeter'}
-            </Text>
-          </View>
-          {patient.insurance_payer ? (
-            <Text style={[cd.meta, { color: colors.textSecondary }]} numberOfLines={1}>{patient.insurance_payer}</Text>
-          ) : null}
+          {canDelete && (
+            <Pressable
+              hitSlop={10}
+              onPress={() => onDelete?.(patient)}
+              style={{ padding: 6, marginLeft: 8 }}>
+              <Trash2 size={15} color="#EF4444" strokeWidth={1.75} />
+            </Pressable>
+          )}
         </View>
       </Card>
     </Pressable>
@@ -507,6 +644,82 @@ const RISK_OPTS = [
   { label: 'Critical', value: 'critical' },
 ];
 
+const PAGE_SIZE = 100;
+
+// ── Pagination bar ─────────────────────────────────────────────────────────
+
+function PaginationBar({
+  page, totalPages, onPage, colors,
+}: { page: number; totalPages: number; onPage: (p: number) => void; colors: any }) {
+  if (totalPages <= 1) return null;
+
+  // Show at most 5 page numbers centred around current page
+  const range: number[] = [];
+  const start = Math.max(1, page - 2);
+  const end   = Math.min(totalPages, start + 4);
+  for (let i = start; i <= end; i++) range.push(i);
+
+  return (
+    <View style={pg.wrap}>
+      <Pressable
+        onPress={() => onPage(page - 1)}
+        disabled={page === 1}
+        style={[pg.btn, { borderColor: colors.border, opacity: page === 1 ? 0.35 : 1 }]}
+      >
+        <Text style={[pg.btnText, { color: colors.textSecondary }]}>‹</Text>
+      </Pressable>
+
+      {start > 1 && (
+        <>
+          <Pressable onPress={() => onPage(1)} style={[pg.btn, { borderColor: colors.border }]}>
+            <Text style={[pg.btnText, { color: colors.textSecondary }]}>1</Text>
+          </Pressable>
+          {start > 2 && <Text style={[pg.ellipsis, { color: colors.textSecondary }]}>…</Text>}
+        </>
+      )}
+
+      {range.map((p) => (
+        <Pressable
+          key={p}
+          onPress={() => onPage(p)}
+          style={[pg.btn, {
+            borderColor: p === page ? colors.primary : colors.border,
+            backgroundColor: p === page ? colors.primary : 'transparent',
+          }]}
+        >
+          <Text style={[pg.btnText, { color: p === page ? '#052B00' : colors.textSecondary, fontWeight: p === page ? '800' : '500' }]}>
+            {p}
+          </Text>
+        </Pressable>
+      ))}
+
+      {end < totalPages && (
+        <>
+          {end < totalPages - 1 && <Text style={[pg.ellipsis, { color: colors.textSecondary }]}>…</Text>}
+          <Pressable onPress={() => onPage(totalPages)} style={[pg.btn, { borderColor: colors.border }]}>
+            <Text style={[pg.btnText, { color: colors.textSecondary }]}>{totalPages}</Text>
+          </Pressable>
+        </>
+      )}
+
+      <Pressable
+        onPress={() => onPage(page + 1)}
+        disabled={page === totalPages}
+        style={[pg.btn, { borderColor: colors.border, opacity: page === totalPages ? 0.35 : 1 }]}
+      >
+        <Text style={[pg.btnText, { color: colors.textSecondary }]}>›</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const pg = StyleSheet.create({
+  wrap:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 20 },
+  btn:     { minWidth: 34, height: 34, borderRadius: 9, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  btnText: { fontSize: 13 },
+  ellipsis:{ fontSize: 13, paddingHorizontal: 2 },
+});
+
 // ── Main screen ────────────────────────────────────────────────────────────
 
 export default function PatientsScreen() {
@@ -515,11 +728,13 @@ export default function PatientsScreen() {
   const isSuperAdmin  = session?.user.role === 'super_admin';
   const isClinicAdmin = session?.user.role === 'clinic_admin';
 
-  const [patients, setPatients]     = useState<Patient[]>([]);
-  const [total, setTotal]           = useState(0);
-  const [loading, setLoading]       = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [showEnroll, setShowEnroll] = useState(false);
+  const [patients, setPatients]         = useState<Patient[]>([]);
+  const [total, setTotal]               = useState(0);
+  const [loading, setLoading]           = useState(true);
+  const [refreshing, setRefreshing]     = useState(false);
+  const [showEnroll, setShowEnroll]     = useState(false);
+  const [deletingPatient, setDeletingPatient] = useState<Patient | null>(null);
+  const [page, setPage]                 = useState(1);
 
   const [q, setQ]             = useState('');
   const [source, setSource]   = useState<PatientSource | ''>('');
@@ -527,17 +742,35 @@ export default function PatientsScreen() {
   const [status, setStatus]   = useState('');
   const [risk, setRisk]       = useState('');
   const [clinicId, setClinicId] = useState('');
+  const [clinicFilterName, setClinicFilterName] = useState('');
+  const [showClinicPicker, setShowClinicPicker] = useState(false);
   const [allClinics, setAllClinics] = useState<{ id: string; name: string }[]>([]);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  // Spinning animation for the refresh button
+  const spinAnim = useRef(new Animated.Value(0)).current;
+  const spinLoop = useRef<Animated.CompositeAnimation | null>(null);
+  useEffect(() => {
+    if (refreshing) {
+      spinAnim.setValue(0);
+      spinLoop.current = Animated.loop(
+        Animated.timing(spinAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+      );
+      spinLoop.current.start();
+    } else {
+      spinLoop.current?.stop();
+      spinAnim.setValue(0);
+    }
+  }, [refreshing, spinAnim]);
+  const spinStyle = {
+    transform: [{ rotate: spinAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }],
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const myClinicName = useMemo(
     () => allClinics.find((c) => c.id === session?.user.clinicId)?.name ?? '',
     [allClinics, session],
-  );
-
-  const clinicOpts = useMemo(
-    () => [{ label: 'All Clinics', value: '' }, ...allClinics.map((c) => ({ label: c.name, value: c.id }))],
-    [allClinics],
   );
 
   useEffect(() => {
@@ -556,6 +789,8 @@ export default function PatientsScreen() {
         status:   status   || undefined,
         risk:     risk     || undefined,
         clinicId: clinicId || undefined,
+        page:     page - 1,   // backend is 0-indexed
+        limit:    PAGE_SIZE,
       });
       setPatients(res.patients);
       setTotal(res.total);
@@ -565,15 +800,23 @@ export default function PatientsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [session, q, source, program, status, risk, clinicId]);
+  }, [session, q, source, program, status, risk, clinicId, page]);
+
+  // Reset to page 1 whenever filters or search change
+  useEffect(() => {
+    setPage(1);
+  }, [q, source, program, status, risk, clinicId]);
 
   useEffect(() => {
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => load(), q ? 400 : 0);
     return () => clearTimeout(debounceRef.current);
-  }, [load, q]);
+  }, [load]);
 
   const anyFilter = !!source || !!program || !!status || !!risk || !!clinicId;
+
+  const pageStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const pageEnd   = Math.min(page * PAGE_SIZE, total);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -581,7 +824,7 @@ export default function PatientsScreen() {
         data={patients}
         keyExtractor={(item) => item.id}
         contentContainerStyle={s.content}
-        onRefresh={() => load(true)}
+        onRefresh={() => { setPage(1); load(true); }}
         refreshing={refreshing}
         ListHeaderComponent={
           <View>
@@ -589,15 +832,26 @@ export default function PatientsScreen() {
               <PageHeader
                 eyebrow="Registry"
                 title="Patient Registry"
-                description={loading ? 'Loading…' : `${total.toLocaleString()} patient${total !== 1 ? 's' : ''}`}
+                description={
+                  loading
+                    ? 'Loading…'
+                    : total > 0
+                    ? `${pageStart}–${pageEnd} of ${total.toLocaleString()} patients`
+                    : '0 patients'
+                }
               />
               <View style={s.headerActions}>
-                <Pressable onPress={() => load(true)} style={[s.iconBtn, { borderColor: colors.border }]}>
-                  <RefreshCw size={15} color={colors.textSecondary} />
+                <Pressable
+                  onPress={() => load(true)}
+                  disabled={refreshing}
+                  style={[s.iconBtn, { borderColor: refreshing ? colors.primary : colors.border }]}>
+                  <Animated.View style={spinStyle}>
+                    <RefreshCw size={15} color={refreshing ? colors.primary : colors.textSecondary} />
+                  </Animated.View>
                 </Pressable>
                 {(isSuperAdmin || isClinicAdmin) && (
                   <Pressable onPress={() => setShowEnroll(true)} style={[s.enrollBtn, { backgroundColor: colors.primary }]}>
-                    <Plus size={15} color="#fff" />
+                    <Plus size={15} color="#052B00" />
                     <Text style={s.enrollBtnText}>Enroll</Text>
                   </Pressable>
                 )}
@@ -609,7 +863,7 @@ export default function PatientsScreen() {
               <TextInput
                 value={q}
                 onChangeText={setQ}
-                placeholder="Search patients by name…"
+                placeholder="Search by name, patient ID or MRN…"
                 placeholderTextColor={colors.textSecondary}
                 style={[s.searchInput, { color: colors.text }]}
               />
@@ -626,17 +880,21 @@ export default function PatientsScreen() {
               <FilterDropdown label="All Statuses" options={STATUS_OPTS}  value={status}  onChange={(v) => setStatus(v)} colors={colors} />
               <FilterDropdown label="All Risk"     options={RISK_OPTS}    value={risk}    onChange={(v) => setRisk(v)}   colors={colors} />
               {isSuperAdmin && (
-                <FilterDropdown
-                  label="All Clinics"
-                  options={clinicOpts}
-                  value={clinicId}
-                  onChange={(v) => setClinicId(v)}
-                  colors={colors}
-                />
+                <Pressable
+                  onPress={() => setShowClinicPicker(true)}
+                  style={[fd.chip, {
+                    borderColor: clinicId ? colors.primary : colors.border,
+                    backgroundColor: clinicId ? colors.primary + '14' : colors.card,
+                  }]}>
+                  <Text style={[fd.chipText, { color: clinicId ? colors.primary : colors.textSecondary }]}>
+                    {clinicFilterName || 'All Clinics'}
+                  </Text>
+                  <ChevronDown size={11} color={clinicId ? colors.primary : colors.textSecondary} />
+                </Pressable>
               )}
               {anyFilter && (
                 <Pressable
-                  onPress={() => { setSource(''); setProgram(''); setStatus(''); setRisk(''); setClinicId(''); }}
+                  onPress={() => { setSource(''); setProgram(''); setStatus(''); setRisk(''); setClinicId(''); setClinicFilterName(''); }}
                   style={[fd.chip, { borderColor: colors.destructive + '60', backgroundColor: colors.destructive + '12' }]}>
                   <Text style={[fd.chipText, { color: colors.destructive }]}>Clear</Text>
                   <X size={10} color={colors.destructive} />
@@ -645,8 +903,25 @@ export default function PatientsScreen() {
             </ScrollView>
           </View>
         }
-        renderItem={({ item }) => <PatientCard patient={item} colors={colors} />}
+        renderItem={({ item }) => (
+          <PatientCard
+            patient={item}
+            colors={colors}
+            canDelete={isSuperAdmin || isClinicAdmin}
+            onDelete={setDeletingPatient}
+          />
+        )}
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+        ListFooterComponent={
+          !loading && patients.length > 0 ? (
+            <PaginationBar
+              page={page}
+              totalPages={totalPages}
+              onPage={(p) => setPage(p)}
+              colors={colors}
+            />
+          ) : null
+        }
         ListEmptyComponent={
           <View style={s.empty}>
             {loading ? (
@@ -657,8 +932,8 @@ export default function PatientsScreen() {
                 <Text style={[s.emptyTitle, { color: colors.text }]}>No patients found</Text>
                 <Text style={[s.emptyDesc, { color: colors.textSecondary }]}>
                   {anyFilter || q
-                    ? 'Try adjusting your filters or search.'
-                    : 'Patients sync hourly from Tenovi & SmartMeter.\nPull down to refresh or tap Enroll to add one now.'}
+                    ? 'Try adjusting your filters or search term.'
+                    : 'Patients sync hourly from Tenovi & SmartMeter.\nPull down to refresh or tap Enroll to add one.'}
                 </Text>
               </>
             )}
@@ -666,15 +941,40 @@ export default function PatientsScreen() {
         }
       />
 
+      {isSuperAdmin && (
+        <ClinicPickerModal
+          visible={showClinicPicker}
+          clinics={[{ id: '', name: 'All Clinics' }, ...allClinics]}
+          selectedId={clinicId}
+          onSelect={(id, name) => {
+            setClinicId(id);
+            setClinicFilterName(id ? name : '');
+          }}
+          onClose={() => setShowClinicPicker(false)}
+          colors={colors}
+          loading={false}
+        />
+      )}
+
       {session && (
         <EnrollModal
           visible={showEnroll}
           onClose={() => setShowEnroll(false)}
-          onSuccess={() => load()}
+          onSuccess={() => { setPage(1); load(); }}
           isSuperAdmin={isSuperAdmin}
           myClinicId={session.user.clinicId}
           myClinicName={myClinicName}
           token={session.token}
+          colors={colors}
+        />
+      )}
+
+      {session && (
+        <DeletePatientModal
+          patient={deletingPatient}
+          token={session.token}
+          onClose={() => setDeletingPatient(null)}
+          onDeleted={(id) => setPatients((prev) => prev.filter((p) => p.id !== id))}
           colors={colors}
         />
       )}
@@ -690,7 +990,7 @@ const s = StyleSheet.create({
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16 },
   iconBtn:       { width: 34, height: 34, borderRadius: 10, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
   enrollBtn:     { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
-  enrollBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  enrollBtnText: { color: '#052B00', fontSize: 13, fontWeight: '700' },
   searchBox:     { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, height: 40, marginTop: 10 },
   searchInput:   { flex: 1, fontSize: 13 },
   filterRow:     { marginTop: 10, marginBottom: 14 },

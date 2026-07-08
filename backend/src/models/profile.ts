@@ -57,3 +57,17 @@ export async function deleteProfile(id: string): Promise<void> {
   const { error } = await supabaseAdmin.from("profiles").delete().eq("id", id);
   if (error) throw error;
 }
+
+export async function updateProfile(
+  id: string,
+  patch: Partial<Pick<ProfileRecord, "name" | "role" | "clinic_id">>,
+): Promise<ProfileRecord> {
+  const { data, error } = await supabaseAdmin
+    .from("profiles")
+    .update(patch)
+    .eq("id", id)
+    .select(SELECT_COLUMNS)
+    .single();
+  if (error) throw error;
+  return data as ProfileRecord;
+}

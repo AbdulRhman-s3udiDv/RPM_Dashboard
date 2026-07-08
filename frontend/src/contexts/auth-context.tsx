@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { api, ApiError, configureRefresh, type ApiUser } from '@/lib/api';
+import { api, ApiError, configureRefresh, configureSuspended, type ApiUser } from '@/lib/api';
 
 // Refresh the token 5 minutes before it expires
 const REFRESH_BUFFER_S = 5 * 60;
@@ -15,8 +15,10 @@ type Session = {
 type Ctx = {
   session: Session | null;
   isReady: boolean;
+  isSuspended: boolean;
   login: (email: string, password: string) => Promise<{ ok: true } | { ok: false; error: string }>;
   logout: () => void;
+  clearSuspended: () => void;
   updateUser: (user: ApiUser) => void;
 };
 
@@ -26,6 +28,7 @@ const STORAGE_KEY = 'rpmcares.session';
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [isSuspended, setIsSuspended] = useState(false);
   const sessionRef = useRef<Session | null>(null);
 
   // Keep the ref in sync so the refresh callback always reads the latest session
@@ -73,6 +76,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     return () => configureRefresh(null);
   }, [doRefresh]);
+
+  // Register the suspension callback — fires when any API call returns 403 "suspended".
+  useEffect(() => {
+    configureSuspended(() => {
+      setIsSuspended(true);
+      clearSession();
+    });
+    return () => configureSuspended(null);
+  }, [clearSession]);
 
   // Proactive refresh timer — fires REFRESH_BUFFER_S seconds before expiry.
   // This handles the normal case where the app stays open across the 1-hour
@@ -129,6 +141,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = () => { clearSession(); };
 
+  const clearSuspended = () => { setIsSuspended(false); };
+
   const updateUser = (user: ApiUser) => {
     setSession((prev) => {
       if (!prev) return null;
@@ -138,7 +152,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  return <AuthCtx.Provider value={{ session, isReady, login, logout, updateUser }}>{children}</AuthCtx.Provider>;
+  return (
+    <AuthCtx.Provider value={{ session, isReady, isSuspended, login, logout, clearSuspended, updateUser }}>
+      {children}
+    </AuthCtx.Provider>
+  );
 }
 
 export function useAuth() {

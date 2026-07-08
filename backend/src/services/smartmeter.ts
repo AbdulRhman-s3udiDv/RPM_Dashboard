@@ -140,7 +140,7 @@ async function fetchPatientCount(apiKey: string, clinicName: string): Promise<nu
   return total;
 }
 
-// Count patients with 16+ distinct reading days this month from actual readings
+// Count patients with 2+ distinct reading days this month from actual readings
 async function fetchReadingsCompliance(apiKey: string): Promise<number> {
   const { start, end } = currentMonthRange();
   const resp = await smPost<ReadingsResp>(apiKey, "/api/readings", {
@@ -155,7 +155,150 @@ async function fetchReadingsCompliance(apiKey: string): Promise<number> {
     if (!daysByPatient.has(r.patient_id)) daysByPatient.set(r.patient_id, new Set());
     daysByPatient.get(r.patient_id)!.add(day);
   }
-  return [...daysByPatient.values()].filter((days) => days.size >= 16).length;
+  return [...daysByPatient.values()].filter((days) => days.size >= 2).length;
+}
+
+// ── Individual patient detail (full profile) ──────────────────────────────
+
+export type SmartMeterAddress = {
+  address1?: string | null;
+  address2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  country?: string | null;
+};
+
+export type SmartMeterPatientDetail = {
+  patient_id: number;
+  first_name?: string | null;
+  middle_name?: string | null;
+  last_name?: string | null;
+  suffix?: string | null;
+  display_name?: string | null;
+  gender?: string | null;
+  race?: string | null;
+  dob?: string | null;
+  language?: string | null;
+  time_zone?: string | null;
+  email?: string | null;
+  home_phone?: string | null;
+  cell_phone?: string | null;
+  message_delivery_preference?: string | null;
+  preferred_phone?: string | null;
+  preferred_time_of_day?: string | null;
+  preferred_day_of_week?: string | null;
+  shipping_address?: SmartMeterAddress | null;
+  physical_address?: SmartMeterAddress | null;
+};
+
+export async function getSmartMeterPatientDetail(
+  apiKey: string,
+  patientId: string | number,
+): Promise<SmartMeterPatientDetail | null> {
+  try {
+    const res = await withRetry(
+      () => smGet<{ data: SmartMeterPatientDetail }>(apiKey, `/api/patients/${patientId}`),
+      `patient-detail-${patientId}`,
+    );
+    return res.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Deactivate patient ────────────────────────────────────────────────────
+// SmartMeter has no delete-patient endpoint; best we can do is set status=Inactive
+// and disenrollment_date. Fetches current patient to include required fields.
+export async function deactivateSmartMeterPatient(
+  apiKey: string,
+  patientId: string | number,
+): Promise<void> {
+  const jwt = await getJwt(apiKey);
+  const now = new Date().toISOString().replace("T", "T").slice(0, 19);
+
+  // Fetch current patient so we can include required fields (first_name, last_name, date_of_birth)
+  let detail: SmartMeterPatientDetail | null = null;
+  try {
+    const r = await smGet<{ data: SmartMeterPatientDetail }>(apiKey, `/api/patients/${patientId}`);
+    detail = r.data ?? null;
+  } catch {
+    // continue without detail — PUT may fail if required fields are missing
+  }
+
+  const body: Record<string, unknown> = {
+    status: "Inactive",
+    disenrollment_date: now,
+  };
+  if (detail?.first_name) body.first_name = detail.first_name;
+  if (detail?.last_name)  body.last_name  = detail.last_name;
+  if (detail?.dob)        body.date_of_birth = detail.dob;
+
+  const res = await fetchWithTimeout(`${BASE}/api/patients/${patientId}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.warn(`[smartmeter] deactivate patient ${patientId} → ${res.status}: ${text.slice(0, 200)}`);
+  } else {
+    console.log(`[smartmeter] patient ${patientId} set to Inactive`);
+  }
+}
+
+// ── Individual patient readings ────────────────────────────────────────────
+// Field names match the SmartMeter /api/readings response exactly (see api-docs.yaml readings_info schema)
+
+export type SmartMeterReadingDetail = {
+  reading_id?: number | string;
+  patient_id?: number;
+  date_recorded?: string;
+  reading_type?: string;           // "blood_pressure" | "blood_glucose" | "pulse_ox" | "weight" | "thermometer"
+  systolic_mmhg?: number | null;
+  diastolic_mmhg?: number | null;
+  pulse_bpm?: number | null;
+  blood_glucose_mgdl?: number | null;
+  blood_glucose_mmol?: number | null;
+  weight_lbs?: number | null;
+  weight_kg?: number | null;
+  spo2?: number | null;
+  temperature?: number | null;
+  is_flagged?: boolean;
+  device_id?: string | number | null;
+};
+
+export async function getSmartMeterPatientReadingDetail(
+  apiKey: string,
+  patientId: string | number,
+  days = 30,
+): Promise<SmartMeterReadingDetail[]> {
+  const now = new Date();
+  const s = new Date(now);
+  s.setDate(s.getDate() - Math.min(days, 31)); // SmartMeter enforces a 31-day window
+  const start = s.toISOString().slice(0, 19);
+  const end = now.toISOString().slice(0, 19);
+
+  // SmartMeter API only has POST /api/readings (no per-patient GET readings endpoint)
+  try {
+    const jwt = await getJwt(apiKey);
+    const res = await fetchWithTimeout(`${BASE}/api/readings`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ date_start: start, date_end: end, patient_id: Number(patientId) }),
+    });
+    if (!res.ok) {
+      console.warn(`[smartmeter] readings for patient ${patientId} → ${res.status}`);
+      return [];
+    }
+    const body = (await res.json()) as { data: SmartMeterReadingDetail[] };
+    return (body.data ?? []).filter((r) => String(r.patient_id) === String(patientId));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[smartmeter] readings for patient ${patientId} failed: ${msg}`);
+    return [];
+  }
 }
 
 // ── Patient list (for sync) ────────────────────────────────────────────────
@@ -192,38 +335,115 @@ export async function listSmartMeterPatients(
   return all;
 }
 
+// ── Orders ────────────────────────────────────────────────────────────────
+
+export type SmartMeterOrderLine = {
+  id?: number;
+  order_number?: string;
+  line_item?: number;
+  sku?: string;
+  line_name?: string | null;
+  serial_number?: string | null;
+  lot_number?: string | null;
+  qty?: number;
+  device_model?: string | null;
+  imei?: string | null;
+  tracking_number?: string | null;
+  carrier?: string | null;
+};
+
+export type SmartMeterOrder = {
+  id: number;
+  order_number: string;
+  customer_id?: string | null;
+  customer_name?: string | null;
+  address1?: string | null;
+  city?: string | null;
+  state?: string | null;
+  status?: string | null;
+  carrier?: string | null;
+  date_created?: string | null;
+  last_updated?: string | null;
+  date_shipped?: string | null;
+  is_refill?: boolean;
+  is_replacement?: boolean;
+  is_sample?: boolean;
+  lines: SmartMeterOrderLine[];
+};
+
+/** Fetch orders within the last `days` days (max 30-day window per request). */
+export async function getSmartMeterOrders(apiKey: string, days = 30): Promise<SmartMeterOrder[]> {
+  const all: SmartMeterOrder[] = [];
+  const now = new Date();
+  // SmartMeter enforces a 30-day maximum window per call; chunk accordingly.
+  for (let offset = 0; offset < days; offset += 30) {
+    const endDate = new Date(now);
+    endDate.setDate(endDate.getDate() - offset);
+    const startDate = new Date(now);
+    startDate.setDate(startDate.getDate() - Math.min(offset + 30, days));
+    const path = `/api/orders?start_date=${isoDate(startDate)}&end_date=${isoDate(endDate)}`;
+    try {
+      const res = await withRetry(
+        () => smGet<{ data: SmartMeterOrder[] }>(apiKey, path),
+        `orders-chunk-${offset}`,
+      );
+      all.push(...(res.data ?? []));
+    } catch (err) {
+      console.warn(`[smartmeter] orders chunk ${offset} failed:`, err);
+    }
+  }
+  return all;
+}
+
 // ── Patient enrollment ─────────────────────────────────────────────────────
+
+const LANG_ISO: Record<string, string> = { EN: "eng", ES: "spa", AR: "ara" };
+const SEX_MAP:  Record<string, string> = { M: "male", F: "female" };
+
+// Normalize phone to E.164 (required by SmartMeter).
+// Accepts "+15551234567", "5551234567", "+1 555 123 4567", "(555) 123-4567", etc.
+function toE164(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const digits = raw.replace(/\D/g, "");       // strip all non-digits
+  if (raw.trimStart().startsWith("+")) {
+    // Already had a country-code prefix — keep it with the stripped digits
+    return digits.length >= 7 ? `+${digits}` : undefined;
+  }
+  if (digits.length === 10) return `+1${digits}`;       // bare US number
+  if (digits.length === 11 && digits[0] === "1") return `+${digits}`;  // 1-prefixed US
+  return undefined;  // unrecognizable — omit rather than send invalid
+}
 
 export async function enrollSmartMeterPatient(
   apiKey: string,
   data: {
     firstName: string;
     lastName: string;
-    dob: string;
-    sex: "M" | "F";
+    dob: string;          // YYYY-MM-DD
+    sex?: "M" | "F" | string;
     phone?: string;
-    insurance?: string;
-    diagnosis?: string;
-    language?: string;
+    language?: string;    // "EN" | "ES" | "AR"
   },
 ): Promise<{ patientId: string }> {
   const jwt = await getJwt(apiKey);
+
+  const body: Record<string, string> = {
+    first_name:    data.firstName,
+    last_name:     data.lastName,
+    date_of_birth: data.dob,
+    language:      LANG_ISO[data.language ?? "EN"] ?? "eng",
+  };
+  const gender = SEX_MAP[data.sex ?? ""];
+  if (gender)              body.gender       = gender;
+  const phone = toE164(data.phone);
+  if (phone)               body.mobile_phone = phone;
+
+  console.log("[smartmeter] POST /api/patients →", JSON.stringify(body));
+
   const res = await fetchWithTimeout(`${BASE}/api/patients`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${jwt}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      first_name: data.firstName,
-      last_name: data.lastName,
-      dob: data.dob,
-      sex: data.sex,
-      phone: data.phone ?? "",
-      insurance_type: data.insurance ?? "",
-      primary_diagnosis: data.diagnosis ?? "",
-      language: data.language ?? "EN",
-    }),
+    headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -239,7 +459,7 @@ export async function enrollSmartMeterPatient(
 type ClinicRaw = {
   name: string;
   totalPatients: number;
-  compliant16: number;  // patients with 16+ distinct reading days this month
+  compliant16: number;  // patients with 2+ distinct reading days this month
   unreadAlerts: number;
   openTasks: number;
   billingCount: number;
@@ -307,7 +527,7 @@ export type SmartMeterSummary = {
   totalPatients: number;
   unreadAlerts: number;
   openTasks: number;
-  complianceRate: number;    // % patients with 16+ distinct reading days this month
+  complianceRate: number;    // % patients with 2+ distinct reading days this month
   compliance20min: number;   // % billing records with CPT 99457/99490 (20+ min)
   billingReadiness: number;  // % billing records not yet submitted
   reviewTimeMinutes: number;
@@ -387,4 +607,31 @@ export async function getSmartMeterSummary(
     topAlerts: allAlerts.slice(0, 5),
     clinicBreakdown,
   };
+}
+
+// ── Per-patient reading counts (used by billing engine sync) ──────────────
+// Returns a map of SmartMeter patient_id → distinct reading day count this month.
+export async function getSmartMeterReadingsByPatient(
+  apiKey: string,
+): Promise<Map<number, number>> {
+  const { start, end } = currentMonthRange();
+  try {
+    const resp = await smPost<ReadingsResp>(apiKey, "/api/readings", {
+      date_start: start,
+      date_end:   end,
+    });
+    const daysByPatient = new Map<number, Set<string>>();
+    for (const r of resp.data ?? []) {
+      const day = r.date_recorded?.slice(0, 10) ?? "";
+      if (!day) continue;
+      if (!daysByPatient.has(r.patient_id)) daysByPatient.set(r.patient_id, new Set());
+      daysByPatient.get(r.patient_id)!.add(day);
+    }
+    const result = new Map<number, number>();
+    for (const [pid, days] of daysByPatient) result.set(pid, days.size);
+    return result;
+  } catch (err) {
+    console.warn("[smartmeter] getSmartMeterReadingsByPatient failed:", err);
+    return new Map();
+  }
 }

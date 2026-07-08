@@ -12,7 +12,7 @@ const EMPTY_SMARTMETER = {
 
 const EMPTY_TENOVI = {
   totalPatients: 0, totalRpmPatients: 0, totalRtmPatients: 0,
-  totalDevices: 0, activeGateways: 0,
+  totalDevices: 0, activeGateways: 0, activeAlerts: 0,
   readingsCompliance: 0, reviewCompliance: 0,
   patientsWithReadings: 0, facilityBreakdown: [],
 };

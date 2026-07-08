@@ -1,6 +1,7 @@
 ﻿import { DefaultTheme, ThemeProvider } from "expo-router";
 import { Drawer } from "expo-router/drawer";
-import { ActivityIndicator, View } from "react-native";
+import { AlertCircle } from "lucide-react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { AnimatedSplashOverlay } from "@/components/animated-icon";
@@ -39,9 +40,37 @@ function DrawerNav() {
   );
 }
 
+function SuspendedScreen() {
+  const colors = useTheme();
+  const { clearSuspended } = useAuth();
+  return (
+    <View style={[ss.root, { backgroundColor: colors.background }]}>
+      <View style={[ss.iconWrap, { backgroundColor: "#F59E0B18" }]}>
+        <AlertCircle size={40} color="#F59E0B" strokeWidth={1.75} />
+      </View>
+      <Text style={[ss.title, { color: colors.text }]}>Account Suspended</Text>
+      <Text style={[ss.body, { color: colors.textSecondary }]}>
+        Your account has been suspended. Please contact your administrator for assistance.
+      </Text>
+      <Pressable style={[ss.btn, { backgroundColor: colors.primary }]} onPress={clearSuspended}>
+        <Text style={ss.btnText}>Sign Out</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const ss = StyleSheet.create({
+  root:    { flex: 1, alignItems: "center", justifyContent: "center", padding: 32 },
+  iconWrap:{ width: 80, height: 80, borderRadius: 24, alignItems: "center", justifyContent: "center", marginBottom: 24 },
+  title:   { fontSize: 22, fontWeight: "800", letterSpacing: -0.3, marginBottom: 10, textAlign: "center" },
+  body:    { fontSize: 14, lineHeight: 22, textAlign: "center", marginBottom: 32 },
+  btn:     { borderRadius: 12, paddingVertical: 14, paddingHorizontal: 40 },
+  btnText: { color: "#fff", fontSize: 15, fontWeight: "700" },
+});
+
 function AuthGate() {
   const colors = useTheme();
-  const { session, isReady } = useAuth();
+  const { session, isReady, isSuspended } = useAuth();
 
   if (!isReady) {
     return (
@@ -51,6 +80,7 @@ function AuthGate() {
     );
   }
 
+  if (isSuspended) return <SuspendedScreen />;
   return session ? <DrawerNav /> : <LoginScreen />;
 }
 

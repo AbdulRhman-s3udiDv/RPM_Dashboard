@@ -26,6 +26,10 @@ const envSchema = z.object({
   // SmartMeter RPM API
   SMARTMETER_API_KEY: z.string().optional(),
   SMARTMETER_BASE_URL: z.string().url().default("https://api.smartmeterrpm.com"),
+  // Resend email (for invite emails sent directly by the backend)
+  RESEND_API_KEY: z.string().optional(),
+  INVITE_FROM_EMAIL: z.string().email().optional(),
+  INVITE_FROM_NAME: z.string().default("RPMCares"),
 });
 
 export const env = envSchema.parse(process.env);

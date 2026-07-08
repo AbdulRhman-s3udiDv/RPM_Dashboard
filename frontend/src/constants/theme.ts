@@ -1,19 +1,19 @@
-﻿/**
- * RPMCares design tokens — light-only professional palette.
- * Inspired by modern B2B SaaS (Stripe, Linear, Vercel).
+/**
+ * RPMCares design tokens — clean white-base palette.
+ * Primary: #19D400. White backgrounds, neutral grays, green used as accent only.
  */
 import { Platform } from "react-native";
 
 const shared = {
-  navy: "#0A1F3B",
+  navy: "#0D2009",               // deep forest green — Tenovi ops card
   navyForeground: "#FFFFFF",
-  success: "#059669",
+  success: "#059669",            // emerald — clearly distinct from primary green
   warning: "#D97706",
   warningForeground: "#78350F",
   critical: "#DC2626",
   info: "#0284C7",
-  chart1: "#0066CC",
-  chart2: "#059669",
+  chart1: "#19D400",
+  chart2: "#0284C7",
   chart3: "#D97706",
   chart4: "#DC2626",
   chart5: "#7C3AED",
@@ -22,53 +22,90 @@ const shared = {
 export const Colors = {
   light: {
     ...shared,
-    text: "#0D1B2A",
-    textSecondary: "#64748B",
-    background: "#F7F9FC",
-    surface: "#F1F5FA",
-    surface2: "#E8EFF6",
+
+    // Text — neutral dark, easy to read
+    text: "#111827",
+    textSecondary: "#6B7280",
+
+    // Backgrounds — white base, very light surfaces
+    background: "#FFFFFF",
+    surface: "#F8FAF8",          // barely-there green tint, almost white
+    surface2: "#F2F4F2",
     card: "#FFFFFF",
-    border: "#DDE4EE",
-    primary: "#0066CC",
-    primaryForeground: "#FFFFFF",
-    secondary: "#ECF2FA",
-    secondaryForeground: "#0D1B2A",
-    muted: "#EEF3F9",
-    mutedForeground: "#64748B",
-    accent: "#DBEAFE",
+    border: "#E4E9E3",           // soft warm-gray border
+
+    // Brand — vivid green used sparingly on interactive elements only
+    primary: "#19D400",
+    primaryForeground: "#052B00", // dark green — 9:1 contrast on #19D400
+
+    // Secondary — pale green chip / badge backgrounds
+    secondary: "#F0FBEe",
+    secondaryForeground: "#1A4314",
+
+    // Muted — neutral light gray
+    muted: "#F3F4F6",
+    mutedForeground: "#6B7280",
+
+    // Accent — very pale green highlight
+    accent: "#E6F9E2",
+
+    // Destructive
     destructive: "#DC2626",
-    sidebar: "#081830",
-    sidebarForeground: "#CBD5E1",
-    sidebarPrimary: "#3B9EFF",
-    sidebarAccent: "#112440",
-    sidebarBorder: "#1C3050",
-    backgroundElement: "#EEF3F9",
-    backgroundSelected: "#DDE6F0",
+
+    // Sidebar — deep forest green (stays dark for contrast)
+    sidebar: "#0D2009",
+    sidebarForeground: "#C8DFC4",
+    sidebarPrimary: "#19D400",
+    sidebarAccent: "#182E14",
+    sidebarBorder: "#1E3A1A",
+
+    // Misc
+    backgroundElement: "#F3F7F2",
+    backgroundSelected: "#E6F5E2",
   },
+
   dark: {
     ...shared,
-    text: "#F1F5F9",
-    textSecondary: "#94A3B8",
-    background: "#020618",
-    surface: "#0A1322",
-    surface2: "#0F1C30",
-    card: "#0F172B",
-    border: "rgba(255,255,255,0.1)",
-    primary: "#3B9EFF",
-    primaryForeground: "#0F172B",
-    secondary: "#1D293D",
-    secondaryForeground: "#F1F5F9",
-    muted: "#1D293D",
-    mutedForeground: "#94A3B8",
-    accent: "#1D293D",
+
+    // Text
+    text: "#F9FAFB",
+    textSecondary: "#9CA3AF",
+
+    // Backgrounds — standard dark gray, not green-heavy
+    background: "#111827",
+    surface: "#1A2320",
+    surface2: "#1F2D28",
+    card: "#1A2320",
+    border: "rgba(255,255,255,0.08)",
+
+    // Brand
+    primary: "#19D400",
+    primaryForeground: "#052B00",
+
+    // Secondary
+    secondary: "#1A3D16",
+    secondaryForeground: "#E6F9E2",
+
+    // Muted
+    muted: "#1F2937",
+    mutedForeground: "#9CA3AF",
+
+    // Accent
+    accent: "#1A3D16",
+
+    // Destructive
     destructive: "#F87171",
-    sidebar: "#0F172B",
-    sidebarForeground: "#F1F5F9",
-    sidebarPrimary: "#3B9EFF",
-    sidebarAccent: "#1D293D",
-    sidebarBorder: "rgba(255,255,255,0.1)",
-    backgroundElement: "#1D293D",
-    backgroundSelected: "#2A3A52",
+
+    // Sidebar
+    sidebar: "#0B1A0E",
+    sidebarForeground: "#D1EED0",
+    sidebarPrimary: "#19D400",
+    sidebarAccent: "#182E14",
+    sidebarBorder: "rgba(25,212,0,0.10)",
+
+    // Misc
+    backgroundElement: "#1F2937",
+    backgroundSelected: "#1A3D16",
   },
 } as const;
 
@@ -99,11 +136,11 @@ export const Spacing = {
 } as const;
 
 export const CardShadow = {
-  shadowColor: "#0A1F3B",
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.08,
-  shadowRadius: 10,
-  elevation: 3,
+  shadowColor: "#111827",
+  shadowOffset: { width: 0, height: 1 },
+  shadowOpacity: 0.06,
+  shadowRadius: 8,
+  elevation: 2,
 };
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;

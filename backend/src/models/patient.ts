@@ -94,15 +94,23 @@ export async function listPatients(filter: {
   let query = supabaseAdmin
     .from("patients")
     .select(SELECT, { count: "exact" })
-    .order("enrolled_at", { ascending: false })
+    // active < disenrolled < inactive < pending alphabetically → active first
+    .order("enrollment_status", { ascending: true })
+    .order("full_name",          { ascending: true })
     .range(offset, offset + limit - 1);
 
-  if (filter.clinicId) query = query.eq("clinic_id",          filter.clinicId);
-  if (filter.source)   query = query.eq("source",             filter.source);
-  if (filter.status)   query = query.eq("enrollment_status",  filter.status);
-  if (filter.program)  query = query.eq("program",            filter.program);
-  if (filter.risk)     query = query.eq("risk",               filter.risk);
-  if (filter.search)   query = query.ilike("full_name", `%${filter.search}%`);
+  if (filter.clinicId) query = query.eq("clinic_id",         filter.clinicId);
+  if (filter.source)   query = query.eq("source",            filter.source);
+  if (filter.status)   query = query.eq("enrollment_status", filter.status);
+  if (filter.program)  query = query.eq("program",           filter.program);
+  if (filter.risk)     query = query.eq("risk",              filter.risk);
+  if (filter.search) {
+    // Search name, external ID, or MRN
+    const term = filter.search.replace(/'/g, "''"); // basic SQL-literal escape
+    query = query.or(
+      `full_name.ilike.%${term}%,external_patient_id.ilike.%${term}%,mrn.ilike.%${term}%`,
+    );
+  }
 
   const { data, error, count } = await query;
   if (error) throw error;
@@ -117,6 +125,11 @@ export async function findPatientById(id: string): Promise<PatientRecord | null>
     .maybeSingle();
   if (error) throw error;
   return data ? mapRow(data) : null;
+}
+
+export async function deletePatient(id: string): Promise<void> {
+  const { error } = await supabaseAdmin.from("patients").delete().eq("id", id);
+  if (error) throw error;
 }
 
 export async function createPatient(input: PatientInput): Promise<PatientRecord> {

@@ -174,19 +174,19 @@ function buildSnapshotHtml(opts: {
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; color: #0D1B2A; background: #fff; font-size: 12px; }
   .page { padding: 36px; max-width: 860px; margin: 0 auto; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 20px; border-bottom: 2px solid #0066CC; margin-bottom: 28px; }
-  .brand-logo { font-size: 22px; font-weight: 900; color: #0066CC; letter-spacing: -0.5px; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 20px; border-bottom: 2px solid #19D400; margin-bottom: 28px; }
+  .brand-logo { font-size: 22px; font-weight: 900; color: #19D400; letter-spacing: -0.5px; }
   .brand-sub { font-size: 11px; color: #64748B; margin-top: 3px; }
   .report-title { font-size: 18px; font-weight: 800; color: #0D1B2A; text-align: right; }
   .report-date { font-size: 11px; color: #64748B; margin-top: 4px; text-align: right; }
-  .period-badge { display: inline-block; background: #EBF3FF; color: #0066CC; font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 999px; margin-top: 6px; }
+  .period-badge { display: inline-block; background: #E1F5DC; color: #19D400; font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 999px; margin-top: 6px; }
   .role-badge { display: inline-block; background: #F7F9FC; color: #64748B; font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 999px; margin-top: 4px; border: 1px solid #DDE4EE; }
   .kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 28px; }
   .kpi { background: #F7F9FC; border: 1px solid #DDE4EE; border-radius: 10px; padding: 14px 16px; }
   .kpi-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: #64748B; margin-bottom: 8px; }
   .kpi-value { font-size: 26px; font-weight: 900; color: #0D1B2A; letter-spacing: -0.5px; line-height: 1; }
   .kpi-sub { font-size: 10px; color: #64748B; margin-top: 6px; line-height: 1.4; }
-  .section-title { font-size: 13px; font-weight: 800; color: #0D1B2A; margin: 24px 0 14px; padding-left: 10px; border-left: 3px solid #0066CC; }
+  .section-title { font-size: 13px; font-weight: 800; color: #0D1B2A; margin: 24px 0 14px; padding-left: 10px; border-left: 3px solid #19D400; }
   .data-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
   .data-table th { text-align: left; padding: 8px 10px; background: #F7F9FC; border-bottom: 1px solid #DDE4EE; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #64748B; }
   .data-table td { padding: 8px 10px; border-bottom: 1px solid #F1F5FA; font-size: 11px; vertical-align: middle; }
@@ -233,7 +233,7 @@ function buildSnapshotHtml(opts: {
     <div class="kpi">
       <div class="kpi-label">Compliance Rate</div>
       <div class="kpi-value">${cr}%</div>
-      <div class="kpi-sub">16+ days of readings — current month</div>
+      <div class="kpi-sub">2+ days of readings — current month</div>
     </div>
     <div class="kpi">
       <div class="kpi-label">Billing Readiness</div>
@@ -254,10 +254,10 @@ function buildSnapshotHtml(opts: {
 
   <!-- Compliance Readiness -->
   <div class="section-title">Compliance Readiness</div>
-  ${barHtml('16+ Readings (CPT 99454)', cr, '#0066CC',
+  ${barHtml('2+ Readings (CPT 99454)', cr, '#19D400',
     sm&&sm.totalPatients>0
       ? `${Math.round(sm.totalPatients*(cr/100)).toLocaleString()} of ${sm.totalPatients.toLocaleString()} patients on track for RPM billing`
-      : 'Requires 16+ distinct days of readings in current month')}
+      : 'Requires 2+ distinct days of readings in current month')}
   ${barHtml('20+ Clinical Minutes (CPT 99457 / 99490)', cm, '#059669',
     'Billing records meeting 20-minute interactive clinical time threshold')}
   ${barHtml('Billing Ready (Unbilled Records)', br, '#0284C7',
@@ -474,6 +474,9 @@ export default function Dashboard() {
   const cm = sm?.compliance20min ?? 0;
   const br = sm?.billingReadiness ?? 0;
   const totalPatients = (sm?.totalPatients ?? 0) + (ten?.totalPatients ?? 0);
+  const smAlerts     = sm?.unreadAlerts ?? 0;
+  const tenoviAlerts = ten?.activeAlerts ?? 0;
+  const totalAlerts  = smAlerts + tenoviAlerts;
 
   const periodLabel = PERIODS.find(p => p.days === days)?.label ?? 'Last 30 days';
 
@@ -561,17 +564,21 @@ export default function Dashboard() {
         />
         <KpiTile
           label="ACTIVE ALERTS"
-          value={(sm?.unreadAlerts ?? 0).toLocaleString()}
+          value={totalAlerts.toLocaleString()}
           icon={Bell}
           iconColor={colors.critical}
-          sub="Unread — requires triage"
+          sub={
+            tenoviAlerts > 0
+              ? `SmartMeter ${smAlerts.toLocaleString()} · Tenovi ${tenoviAlerts.toLocaleString()}`
+              : 'Unread — requires triage'
+          }
         />
         <KpiTile
           label="COMPLIANCE"
           value={`${cr}%`}
           icon={ShieldCheck}
           iconColor={colors.success}
-          sub="16+ reading days — current month"
+          sub="2+ reading days — current month"
         />
         <KpiTile
           label="BILLING READINESS"
@@ -603,13 +610,13 @@ export default function Dashboard() {
       {/* ── Compliance Readiness Cards ───────────────────────────────────── */}
       <ComplianceCard
         icon={Activity}
-        label="16+ READINGS"
+        label="2+ READINGS"
         value={cr}
         color={colors.primary}
         sub={
           sm && sm.totalPatients > 0
             ? `${Math.round(sm.totalPatients * (cr / 100)).toLocaleString()} of ${sm.totalPatients.toLocaleString()} patients on track for RPM billing.`
-            : 'CPT 99454 readiness — requires 16+ days of readings'
+            : 'CPT 99454 readiness — requires 2+ days of readings'
         }
       />
       <ComplianceCard
@@ -631,7 +638,7 @@ export default function Dashboard() {
       {complianceTrend.length > 0 && (
         <ChartCard
           title="Compliance Trend"
-          subtitle="16+ readings — current month live"
+          subtitle="2+ readings — current month live"
           action={
             <StatusPill tone={cr >= 80 ? 'success' : cr >= 60 ? 'warning' : 'critical'}>
               {cr}% now
@@ -719,8 +726,8 @@ export default function Dashboard() {
           <View>
             <Text style={[styles.sectionTitle, { color: colors.text }]}>Top Alerts</Text>
             <Text style={[styles.sectionSub, { color: colors.textSecondary }]}>
-              {sm?.unreadAlerts
-                ? `${sm.unreadAlerts.toLocaleString()} unread · showing newest`
+              {totalAlerts > 0
+                ? `${totalAlerts.toLocaleString()} total · SmartMeter ${smAlerts.toLocaleString()} · Tenovi ${tenoviAlerts.toLocaleString()}`
                 : 'No unread alerts'}
             </Text>
           </View>
@@ -798,7 +805,7 @@ export default function Dashboard() {
         {sm && sm.totalPatients > 0 && cr < 100 ? (
           <>
             <Text style={[styles.aiTitle, { color: colors.text }]}>
-              {`~${Math.round(sm.totalPatients * (1 - cr / 100)).toLocaleString()} patients may miss the 16-reading threshold this month.`}
+              {`~${Math.round(sm.totalPatients * (1 - cr / 100)).toLocaleString()} patients may miss the 2-reading threshold this month.`}
             </Text>
             <Text style={[styles.aiBody, { color: colors.textSecondary }]}>
               Auto-enroll into the "Missed Readings Recovery" workflow to recover CPT 99454 revenue.

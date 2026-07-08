@@ -10,9 +10,14 @@ import { renderAcceptInvitePage } from "./pages/accept-invite";
 import { adminRouter } from "./routes/admin.routes";
 import { alertsRouter } from "./routes/alerts.routes";
 import { authRouter } from "./routes/auth.routes";
+import { billingRouter } from "./routes/billing.routes";
 import { clinicsRouter } from "./routes/clinics.routes";
+import { communicationsRouter } from "./routes/communications.routes";
 import { dashboardRouter } from "./routes/dashboard.routes";
+import { notesRouter } from "./routes/notes.routes";
 import { patientsRouter } from "./routes/patients.routes";
+import { timeLogsRouter } from "./routes/time-logs.routes";
+import { devicesRouter } from "./routes/devices.routes";
 
 const app = express();
 
@@ -45,12 +50,17 @@ app.use("/api", apiLimiter);
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/accept-invite", (_req, res) => res.type("html").send(renderAcceptInvitePage()));
 
-app.use("/api/auth", authRouter);
-app.use("/api/admin", adminRouter);
-app.use("/api/clinics", clinicsRouter);
-app.use("/api/alerts", alertsRouter);
-app.use("/api/dashboard", dashboardRouter);
-app.use("/api/patients", patientsRouter);
+app.use("/api/auth",           authRouter);
+app.use("/api/admin",          adminRouter);
+app.use("/api/billing",        billingRouter);
+app.use("/api/clinics",        clinicsRouter);
+app.use("/api/alerts",         alertsRouter);
+app.use("/api/communications", communicationsRouter);
+app.use("/api/dashboard",      dashboardRouter);
+app.use("/api/notes",          notesRouter);
+app.use("/api/patients",       patientsRouter);
+app.use("/api/time-logs",      timeLogsRouter);
+app.use("/api/devices",        devicesRouter);
 
 // Unknown /api/* routes → JSON 404
 app.use("/api", (_req, res) => res.status(404).json({ error: "Not found." }));

@@ -1,22 +1,56 @@
 import { supabaseAdmin } from "./supabase";
-import { getTenoviSummary, listAllTenoviPatients } from "../services/tenovi";
-import { getSmartMeterSummary, listSmartMeterPatients } from "../services/smartmeter";
+import { getTenoviSummary, getTenoviReadingsByFacility, listAllTenoviPatients } from "../services/tenovi";
+import { getSmartMeterSummary, listSmartMeterPatients, getSmartMeterReadingsByPatient } from "../services/smartmeter";
+import { upsertPatientCycleStats } from "../models/billing";
 
 type ClinicRow = { id: string; name: string; smartmeter_api_key: string | null };
+
+// Strip common legal suffixes so "Awesome Care" matches "Awesome Care Clinics"
+// and "Advanced Care and Wellness Center" matches "…Center LLC".
+function normalizeFacilityName(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[,.]?\s*(pllc|llc|inc|pa|pc|md|dba|clinics|clinic)\s*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findClinicId(
+  facilityName: string,
+  exactMap: Map<string, string>,
+  normalizedMap: Map<string, string>,
+): string | undefined {
+  // 1. Exact (case-insensitive)
+  const key = facilityName.toLowerCase().trim();
+  if (exactMap.has(key)) return exactMap.get(key);
+
+  // 2. After stripping legal suffixes from both sides
+  const normKey = normalizeFacilityName(facilityName);
+  if (normalizedMap.has(normKey)) return normalizedMap.get(normKey);
+
+  // 3. Prefix match — one name starts with the other (handles "Awesome Care" ↔ "Awesome Care Clinics")
+  for (const [dbKey, id] of exactMap) {
+    if (key.startsWith(dbKey) || dbKey.startsWith(key)) return id;
+  }
+
+  return undefined;
+}
 
 // ── Patient roster sync ────────────────────────────────────────────────────
 
 async function syncPatients(clinics: ClinicRow[]): Promise<void> {
   console.log("[sync:patients] Starting patient roster sync…");
 
-  const clinicByName = new Map(
-    clinics.map((c) => [c.name.toLowerCase().trim(), c.id]),
-  );
+  const exactMap = new Map(clinics.map((c) => [c.name.toLowerCase().trim(), c.id]));
+  const normalizedMap = new Map(clinics.map((c) => [normalizeFacilityName(c.name), c.id]));
 
   const smClinics = clinics.filter(
     (c): c is { id: string; name: string; smartmeter_api_key: string } =>
       typeof c.smartmeter_api_key === "string" && c.smartmeter_api_key.length > 0,
   );
+
+  let skipped = 0;
 
   const [tenoviResult, smGroupResult] = await Promise.allSettled([
     listAllTenoviPatients(),
@@ -35,14 +69,30 @@ async function syncPatients(clinics: ClinicRow[]): Promise<void> {
 
   const rows: Record<string, unknown>[] = [];
 
+  // Tenovi status codes (AC/PE/HO/DI/DE) → enrollment_status enum
+  const TENOVI_STATUS_MAP: Record<string, string> = {
+    AC: "active",
+    PE: "pending",
+    HO: "inactive",     // Hold → inactive
+    DI: "disenrolled",  // Discharged
+    DE: "disenrolled",  // Declined
+  };
+
   if (tenoviResult.status === "fulfilled") {
     for (const { facilityName, patients } of tenoviResult.value) {
-      const clinicId = clinicByName.get(facilityName.toLowerCase().trim());
-      if (!clinicId) continue;
+      const clinicId = findClinicId(facilityName, exactMap, normalizedMap);
+      if (!clinicId) {
+        if (patients.length > 0) {
+          console.warn(`[sync:patients] No DB clinic matched Tenovi facility "${facilityName}" — ${patients.length} patients skipped`);
+        }
+        skipped += patients.length;
+        continue;
+      }
 
       for (const en of patients) {
         const module   = en.patient.devices?.[0]?.module ?? "RPM";
         const diagnoses = en.health_condition ? [en.health_condition] : [];
+        const enrollmentStatus = TENOVI_STATUS_MAP[en.status] ?? "inactive";
         rows.push({
           source:              "tenovi",
           external_patient_id: en.patient.id,
@@ -51,7 +101,7 @@ async function syncPatients(clinics: ClinicRow[]): Promise<void> {
           phone:               en.patient.phone_number || null,
           program:             module === "RTM" ? "RTM" : "RPM",
           diagnoses,
-          enrollment_status:   "active",
+          enrollment_status:   enrollmentStatus,
           consent:             true,
           risk:                "low",
           language:            "EN",
@@ -108,7 +158,100 @@ async function syncPatients(clinics: ClinicRow[]): Promise<void> {
     }
   }
 
-  console.log(`[sync:patients] ${upserted} / ${rows.length} patients upserted.`);
+  console.log(`[sync:patients] ${upserted} / ${rows.length} patients upserted. ${skipped} skipped (no matching clinic).`);
+}
+
+// ── Reading counts sync (populates patient_cycle_stats for billing engine) ─
+
+export async function syncReadingCounts(clinics: ClinicRow[]): Promise<void> {
+  const now     = new Date();
+  const y       = now.getFullYear();
+  const m       = now.getMonth() + 1; // 1-based
+  const lastDay = new Date(y, m, 0).getDate(); // last day of month (local)
+  // Build date strings directly — never use toISOString() on a midnight local Date
+  // because UTC conversion shifts it to the previous day in UTC+ timezones.
+  const cycleStartStr = `${y}-${String(m).padStart(2, "0")}-01`;
+  const cycleEndStr   = `${y}-${String(m).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+  // ── SmartMeter clinics ────────────────────────────────────────────────────
+  const smClinics = clinics.filter(
+    (c): c is { id: string; name: string; smartmeter_api_key: string } =>
+      typeof c.smartmeter_api_key === "string" && c.smartmeter_api_key.length > 0,
+  );
+
+  for (const clinic of smClinics) {
+    try {
+      const readingMap = await getSmartMeterReadingsByPatient(clinic.smartmeter_api_key);
+      if (readingMap.size === 0) continue;
+
+      const smIds = [...readingMap.keys()].map(String);
+      const { data: patients } = await supabaseAdmin
+        .from("patients")
+        .select("id, external_patient_id")
+        .eq("source", "smartmeter")
+        .eq("clinic_id", clinic.id)
+        .in("external_patient_id", smIds);
+
+      if (!patients || patients.length === 0) continue;
+
+      const statsRows = patients.map((p) => ({
+        patient_id:      p.id,
+        cycle_start:     cycleStartStr,
+        cycle_end:       cycleEndStr,
+        reading_count:   readingMap.get(parseInt(p.external_patient_id)) ?? 0,
+        monitoring_days: readingMap.get(parseInt(p.external_patient_id)) ?? 0,
+        source:          "smartmeter",
+        synced_at:       now.toISOString(),
+      }));
+
+      await upsertPatientCycleStats(statsRows);
+      console.log(`[sync:billing] ${clinic.name}: ${statsRows.length} reading stats updated`);
+    } catch (err) {
+      console.warn(`[sync:billing] SmartMeter reading sync failed for ${clinic.name}:`, err);
+    }
+  }
+
+  // ── Tenovi clinics ────────────────────────────────────────────────────────
+  try {
+    const exactMap      = new Map(clinics.map((c) => [c.name.toLowerCase().trim(), c.id]));
+    const normalizedMap = new Map(clinics.map((c) => [normalizeFacilityName(c.name), c.id]));
+
+    const facilityGroups = await getTenoviReadingsByFacility();
+
+    for (const group of facilityGroups) {
+      const clinicId = findClinicId(group.facilityName, exactMap, normalizedMap);
+      if (!clinicId || group.patients.length === 0) continue;
+
+      const externalIds = group.patients.map((p) => p.externalId);
+      const { data: dbPatients } = await supabaseAdmin
+        .from("patients")
+        .select("id, external_patient_id")
+        .eq("source", "tenovi")
+        .eq("clinic_id", clinicId)
+        .in("external_patient_id", externalIds);
+
+      if (!dbPatients || dbPatients.length === 0) continue;
+
+      const idMap = new Map(dbPatients.map((p) => [p.external_patient_id, p.id]));
+      const statsRows = group.patients
+        .filter((p) => idMap.has(p.externalId))
+        .map((p) => ({
+          patient_id:      idMap.get(p.externalId)!,
+          cycle_start:     cycleStartStr,
+          cycle_end:       cycleEndStr,
+          reading_count:   p.readingCount,
+          monitoring_days: p.readingCount,
+          source:          "tenovi",
+          synced_at:       now.toISOString(),
+        }));
+
+      if (statsRows.length === 0) continue;
+      await upsertPatientCycleStats(statsRows);
+      console.log(`[sync:billing] Tenovi ${group.facilityName}: ${statsRows.length} reading stats updated`);
+    }
+  } catch (err) {
+    console.warn("[sync:billing] Tenovi reading sync failed:", err);
+  }
 }
 
 // ── Main sync ──────────────────────────────────────────────────────────────
@@ -169,5 +312,15 @@ export async function runSync(): Promise<void> {
     }
   } else {
     console.log(`[sync] Done in ${((Date.now() - start) / 1000).toFixed(1)}s`);
+  }
+
+  // Only sync reading counts — billing evaluation is intentionally NOT run
+  // automatically here. Billing records must remain stable so the queue
+  // doesn't change between page loads. Admins trigger evaluation manually
+  // via the "Re-evaluate" button in the billing UI.
+  if (patientSyncResult.status === "fulfilled") {
+    syncReadingCounts(allClinics).catch((err) =>
+      console.warn("[sync:billing] Reading count sync failed:", err),
+    );
   }
 }

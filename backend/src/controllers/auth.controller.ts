@@ -3,6 +3,13 @@ import { z } from "zod";
 import { supabaseAdmin, supabaseAnon } from "../lib/supabase";
 import { findProfileById, type ProfileRecord } from "../models/profile";
 
+const SUSPENDED_MSG = "Your account has been suspended. Contact your administrator.";
+
+function isBanError(err: unknown): boolean {
+  const msg = ((err as any)?.message ?? "") as string;
+  return msg.toLowerCase().includes("ban");
+}
+
 export async function refreshToken(req: Request, res: Response) {
   const { refreshToken: rt } = req.body;
   if (!rt || typeof rt !== "string") {
@@ -11,6 +18,7 @@ export async function refreshToken(req: Request, res: Response) {
 
   const { data, error } = await supabaseAnon.auth.refreshSession({ refresh_token: rt });
   if (error || !data.session || !data.user) {
+    if (isBanError(error)) return res.status(403).json({ error: SUSPENDED_MSG });
     return res.status(401).json({ error: "Invalid or expired refresh token." });
   }
 
@@ -51,6 +59,7 @@ export async function login(req: Request, res: Response) {
   const { email, password } = parsed.data;
   const { data, error } = await supabaseAnon.auth.signInWithPassword({ email, password });
   if (error || !data.session || !data.user) {
+    if (isBanError(error)) return res.status(403).json({ error: SUSPENDED_MSG });
     return res.status(401).json({ error: "Invalid email or password." });
   }
 

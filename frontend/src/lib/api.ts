@@ -11,8 +11,15 @@ let _refreshCallback: (() => Promise<string | null>) | null = null;
 // backend once even when multiple requests expire at the same moment.
 let _pendingRefresh: Promise<string | null> | null = null;
 
+// Called when any request returns a 403 "suspended" response.
+let _suspendedCallback: (() => void) | null = null;
+
 export function configureRefresh(fn: (() => Promise<string | null>) | null) {
   _refreshCallback = fn;
+}
+
+export function configureSuspended(fn: (() => void) | null) {
+  _suspendedCallback = fn;
 }
 
 export type Role = 'super_admin' | 'clinic_admin' | 'staff';
@@ -28,6 +35,7 @@ export type Member = {
   name: string;
   clinic_id: string | null;
   created_at: string;
+  banned_until?: string | null;
 };
 
 export type Clinic = {
@@ -72,6 +80,7 @@ export type TenoviSummary = {
   totalRtmPatients: number;
   totalDevices: number;
   activeGateways: number;
+  activeAlerts: number;
   readingsCompliance: number;
   reviewCompliance: number;
   patientsWithReadings: number;
@@ -123,6 +132,38 @@ export type AlertEvent = {
 export type PatientSource  = 'tenovi' | 'smartmeter';
 export type PatientProgram = 'RPM' | 'RTM' | 'CCM' | 'PCM';
 
+export type SmartMeterAddress = {
+  address1?: string | null;
+  address2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  country?: string | null;
+};
+
+export type SmartMeterDetail = {
+  patient_id?: number;
+  first_name?: string | null;
+  middle_name?: string | null;
+  last_name?: string | null;
+  suffix?: string | null;
+  display_name?: string | null;
+  gender?: string | null;
+  race?: string | null;
+  dob?: string | null;
+  language?: string | null;
+  time_zone?: string | null;
+  email?: string | null;
+  home_phone?: string | null;
+  cell_phone?: string | null;
+  message_delivery_preference?: string | null;
+  preferred_phone?: string | null;
+  preferred_time_of_day?: string | null;
+  preferred_day_of_week?: string | null;
+  shipping_address?: SmartMeterAddress | null;
+  physical_address?: SmartMeterAddress | null;
+};
+
 // Matches the existing public.patients table in Supabase
 export type Patient = {
   id: string;
@@ -152,6 +193,26 @@ export type Patient = {
   updated_at: string;
 };
 
+export type ReadingType =
+  | 'blood_pressure' | 'glucose' | 'weight'
+  | 'spo2' | 'heart_rate' | 'temperature' | 'unknown';
+
+export type PatientReading = {
+  id: string;
+  timestamp: string;
+  type: ReadingType;
+  label: string;
+  displayValue: string;
+  value: number | null;
+  unit: string;
+  systolic?: number;
+  diastolic?: number;
+  pulse?: number;
+  flagged: boolean;
+  source: 'smartmeter' | 'tenovi';
+  deviceId?: string | null;
+};
+
 export type EnrollPatientInput = {
   clinicId: string;
   system: PatientSource;
@@ -166,6 +227,171 @@ export type EnrollPatientInput = {
   diagnosis?: string;
   orderingPhysician?: string;
   healthCondition?: string;
+};
+
+// ── Billing types ──────────────────────────────────────────────────────────
+
+export type BillingRecord = {
+  id: string;
+  patient_id: string;
+  patient_name: string;
+  patient_dob: string | null;
+  clinic_id: string;
+  clinic_name: string | null;
+  cycle_start: string;
+  cycle_end: string;
+  cpt_code: string;
+  units: number;
+  dos: string | null;
+  program: string;
+  insurance_type: string;
+  status: 'pending' | 'generated' | 'reviewed' | 'signed' | 'submitted' | 'paid' | 'voided';
+  projected_amount: number | null;
+  actual_amount: number | null;
+  reading_count: number | null;
+  total_minutes: number | null;
+  note_id: string | null;
+  locked_at: string | null;
+  submitted_at: string | null;
+  override_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BillingRuleItem = {
+  id: string;
+  rule_name: string;
+  rule_category: string;
+  insurance_type: string;
+  min_readings: number | null;
+  max_readings: number | null;
+  trigger_minutes: number | null;
+  cpt_codes: string[];
+  units: number;
+  is_one_time: boolean;
+  is_active: boolean;
+  sort_order: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FeeScheduleItem = {
+  id: string;
+  payer: string;
+  cpt_code: string;
+  amount: number;
+  effective_date: string;
+  end_date: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DosOffsetItem = {
+  id: string;
+  program: string;
+  cpt_code: string;
+  offset_days: number | null;
+  offset_type: 'cycle_start' | 'shipment_date';
+  created_at: string;
+  updated_at: string;
+};
+
+export type RevenueBreakdown = {
+  totalProjected: number;
+  totalSubmitted: number;
+  totalPaid: number;
+  pending: number;
+  byProgram:   Array<{ program: string;       amount: number; count: number }>;
+  byClinic:    Array<{ clinic_id: string; clinic_name: string; amount: number; count: number }>;
+  byCpt:       Array<{ cpt_code: string;      amount: number; count: number; units: number }>;
+  byInsurance: Array<{ insurance_type: string; amount: number; count: number }>;
+  byMonth:     Array<{ month: string;         amount: number; count: number }>;
+};
+
+export type PatientBillingSummary = {
+  cycles:  Array<{ id: string; cycle_start: string; consent_date: string | null; shipment_date: string | null }>;
+  records: BillingRecord[];
+  stats:   Array<{ cycle_start: string; cycle_end: string; reading_count: number; monitoring_days: number }>;
+};
+
+export type TimeLog = {
+  id: string;
+  patient_id: string;
+  staff_id: string | null;
+  staff_name: string | null;
+  program: string;
+  activity_type: string;
+  duration_seconds: number;
+  duration_minutes: number;
+  notes: string | null;
+  logged_at: string;
+  created_at: string;
+};
+
+export type CareNote = {
+  id: string;
+  patient_id: string;
+  author_id: string | null;
+  author_name: string | null;
+  note_type: string;
+  cpt_codes: string[];
+  content: Record<string, unknown>;
+  ai_generated: boolean;
+  status: 'draft' | 'reviewed' | 'signed' | 'locked';
+  signed_at: string | null;
+  dos: string | null;
+  cycle_start: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CommLog = {
+  id: string;
+  patient_id: string;
+  staff_id: string | null;
+  staff_name: string | null;
+  comm_type: string;
+  direction: string;
+  duration_seconds: number | null;
+  summary: string | null;
+  occurred_at: string;
+  created_at: string;
+};
+
+// ── Device types ───────────────────────────────────────────────────────────
+
+export type UnifiedDevice = {
+  id: string;
+  serial: string;
+  type: string;
+  vendor: 'SmartMeter' | 'Tenovi';
+  module: 'RPM' | 'RTM';
+  status: string;
+  patientName: string | null;
+  patientExternalId: string | null;
+  facilityName: string | null;
+  lastMeasurement: string | null;
+  connected: boolean | null;
+  shippedDate: string | null;
+};
+
+export type UnifiedOrder = {
+  id: string;
+  orderNumber: string;
+  source: 'SmartMeter' | 'Tenovi';
+  status: string;
+  statusRaw: string;
+  patientName: string | null;
+  clinicName: string | null;
+  devices: string[];
+  carrier: string | null;
+  tracking: string | null;
+  trackingLink: string | null;
+  createdAt: string | null;
+  shippedOn: string | null;
+  deliveredOn: string | null;
+  fulfilled: boolean;
 };
 
 export class ApiError extends Error {
@@ -209,6 +435,10 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
   }
 
   if (!res.ok) {
+    // Notify the auth layer so it can show the suspension screen
+    if (res.status === 403 && typeof body?.error === 'string' && body.error.toLowerCase().includes('suspend')) {
+      _suspendedCallback?.();
+    }
     throw new ApiError(body?.error ?? `Request failed (${res.status})`, res.status);
   }
   return body as T;
@@ -229,13 +459,27 @@ export const api = {
     token: string,
     payload: { email: string; name: string; role: 'clinic_admin' | 'staff'; clinicId: string },
   ) =>
-    request<{ ok: true }>(
+    request<{ ok: true; emailSent: boolean; emailError?: string; inviteLink: string | null; email: string }>(
       '/api/admin/members/invite',
       { method: 'POST', body: JSON.stringify(payload) },
       token,
     ),
   removeMember: (token: string, id: string) =>
     request<{ ok: true }>(`/api/admin/members/${id}`, { method: 'DELETE' }, token),
+  updateMember: (
+    token: string,
+    id: string,
+    patch: { name?: string; role?: 'clinic_admin' | 'staff'; clinic_id?: string },
+  ) =>
+    request<{ member: Member }>(`/api/admin/members/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }, token),
+  resetMemberPassword: (token: string, id: string) =>
+    request<{ ok: true; resetLink: string; email: string }>(
+      `/api/admin/members/${id}/reset-password`, { method: 'POST' }, token,
+    ),
+  suspendMember: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/admin/members/${id}/suspend`, { method: 'POST' }, token),
+  unsuspendMember: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/admin/members/${id}/unsuspend`, { method: 'POST' }, token),
 
   listClinics: (token: string) => request<{ clinics: Clinic[] }>('/api/clinics', { method: 'GET' }, token),
   createClinic: (token: string, name: string) =>
@@ -270,6 +514,7 @@ export const api = {
       risk?:     string;
       search?:   string;
       page?:     number;
+      limit?:    number;
     },
   ) => {
     const entries = Object.entries(params ?? {}).filter(([, v]) => v != null && v !== '');
@@ -277,7 +522,7 @@ export const api = {
     return request<{ patients: Patient[]; total: number }>(`/api/patients${qs}`, { method: 'GET' }, token);
   },
   getPatient: (token: string, id: string) =>
-    request<{ patient: Patient }>(`/api/patients/${id}`, { method: 'GET' }, token),
+    request<{ patient: Patient; smDetail?: SmartMeterDetail | null }>(`/api/patients/${id}`, { method: 'GET' }, token),
   enrollPatient: (token: string, data: EnrollPatientInput) =>
     request<{ patient: Patient; warning?: string }>(
       '/api/patients/enroll',
@@ -293,4 +538,128 @@ export const api = {
 
   getClinicBreakdown: (token: string) =>
     request<{ breakdown: ClinicBreakdownItem[] }>('/api/clinics/breakdown', { method: 'GET' }, token),
+
+  getPatientReadings: (token: string, patientId: string, days = 30) =>
+    request<{ readings: PatientReading[]; warning?: string }>(
+      `/api/patients/${patientId}/readings?days=${days}`, { method: 'GET' }, token,
+    ),
+
+  getPatientAlerts: (token: string, patientId: string) =>
+    request<{ alerts: AlertEvent[] }>(
+      `/api/patients/${patientId}/alerts`, { method: 'GET' }, token,
+    ),
+  deletePatient: (token: string, patientId: string, password: string) =>
+    request<{ ok: true }>(
+      `/api/patients/${patientId}`,
+      { method: 'DELETE', body: JSON.stringify({ password }) },
+      token,
+    ),
+
+  // ── Billing ────────────────────────────────────────────────────────────────
+  getBillingQueue: (
+    token: string,
+    filters?: {
+      clinicId?: string; program?: string; insuranceType?: string;
+      cptCode?: string; status?: string; month?: string;
+    },
+  ) => {
+    const qs = filters
+      ? '?' + new URLSearchParams(
+          Object.entries(filters).filter(([, v]) => v != null && v !== '') as [string, string][]
+        ).toString()
+      : '';
+    return request<{ records: BillingRecord[]; count: number }>(`/api/billing/queue${qs}`, { method: 'GET' }, token);
+  },
+  updateBillingRecord: (
+    token: string,
+    id: string,
+    patch: { status?: string; dos?: string; actual_amount?: number; override_reason?: string },
+  ) => request<{ record: BillingRecord }>(`/api/billing/records/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }, token),
+
+  getBillingRevenue: (token: string, year?: number, clinicId?: string) => {
+    const p = new URLSearchParams();
+    if (year)     p.set('year', String(year));
+    if (clinicId) p.set('clinicId', clinicId);
+    const qs = p.toString() ? '?' + p.toString() : '';
+    return request<RevenueBreakdown>(`/api/billing/revenue${qs}`, { method: 'GET' }, token);
+  },
+
+  getBillingRules: (token: string) =>
+    request<{ rules: BillingRuleItem[] }>('/api/billing/rules', { method: 'GET' }, token),
+  createBillingRule: (token: string, rule: Omit<BillingRuleItem, 'id' | 'created_at' | 'updated_at'>) =>
+    request<{ rule: BillingRuleItem }>('/api/billing/rules', { method: 'POST', body: JSON.stringify(rule) }, token),
+  updateBillingRule: (token: string, id: string, patch: Partial<BillingRuleItem>) =>
+    request<{ rule: BillingRuleItem }>(`/api/billing/rules/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }, token),
+  deleteBillingRule: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/billing/rules/${id}`, { method: 'DELETE' }, token),
+
+  getFeeSchedules: (token: string) =>
+    request<{ schedules: FeeScheduleItem[] }>('/api/billing/fee-schedules', { method: 'GET' }, token),
+  upsertFeeSchedule: (token: string, schedule: Omit<FeeScheduleItem, 'id' | 'created_at' | 'updated_at'>) =>
+    request<{ schedule: FeeScheduleItem }>('/api/billing/fee-schedules', { method: 'PUT', body: JSON.stringify(schedule) }, token),
+  deleteFeeSchedule: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/billing/fee-schedules/${id}`, { method: 'DELETE' }, token),
+
+  getDosOffsets: (token: string) =>
+    request<{ offsets: DosOffsetItem[] }>('/api/billing/dos-offsets', { method: 'GET' }, token),
+  updateDosOffset: (token: string, id: string, patch: { offset_days?: number | null; offset_type?: string }) =>
+    request<{ offset: DosOffsetItem }>(`/api/billing/dos-offsets/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }, token),
+
+  getPatientBilling: (token: string, patientId: string) =>
+    request<PatientBillingSummary>(`/api/billing/patients/${patientId}`, { method: 'GET' }, token),
+  setPatientCycle: (
+    token: string,
+    patientId: string,
+    body: { cycle_start: string; consent_date?: string; shipment_date?: string },
+  ) => request<{ cycle: object }>(`/api/billing/patients/${patientId}/cycle`, { method: 'POST', body: JSON.stringify(body) }, token),
+  triggerBillingEvaluation: (token: string, patientId?: string) =>
+    request<{ ok: true; scope: string }>('/api/billing/evaluate', { method: 'POST', body: JSON.stringify({ patientId }) }, token),
+
+  // ── Time Logs ──────────────────────────────────────────────────────────────
+  listTimeLogs: (token: string, params?: { patientId?: string; clinicId?: string; from?: string; to?: string }) => {
+    const qs = params
+      ? '?' + new URLSearchParams(Object.entries(params).filter(([, v]) => v) as [string, string][]).toString()
+      : '';
+    return request<{ logs: TimeLog[] }>(`/api/time-logs${qs}`, { method: 'GET' }, token);
+  },
+  createTimeLog: (token: string, log: {
+    patient_id: string; clinic_id?: string; program: string;
+    activity_type?: string; duration_seconds: number; notes?: string; logged_at?: string;
+  }) => request<{ log: TimeLog }>('/api/time-logs', { method: 'POST', body: JSON.stringify(log) }, token),
+  updateTimeLog: (token: string, id: string, patch: { duration_seconds?: number; notes?: string; activity_type?: string }) =>
+    request<{ log: TimeLog }>(`/api/time-logs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }, token),
+  deleteTimeLog: (token: string, id: string) =>
+    request<{ ok: true }>(`/api/time-logs/${id}`, { method: 'DELETE' }, token),
+
+  // ── Notes ──────────────────────────────────────────────────────────────────
+  listNotes: (token: string, params?: { patientId?: string; status?: string }) => {
+    const qs = params
+      ? '?' + new URLSearchParams(Object.entries(params).filter(([, v]) => v) as [string, string][]).toString()
+      : '';
+    return request<{ notes: CareNote[] }>(`/api/notes${qs}`, { method: 'GET' }, token);
+  },
+  createNote: (token: string, note: {
+    patient_id: string; note_type?: string; cpt_codes?: string[];
+    content: Record<string, unknown>; dos?: string; cycle_start?: string;
+  }) => request<{ note: CareNote }>('/api/notes', { method: 'POST', body: JSON.stringify(note) }, token),
+  updateNote: (token: string, id: string, patch: { content?: Record<string, unknown>; status?: string; cpt_codes?: string[] }) =>
+    request<{ note: CareNote }>(`/api/notes/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }, token),
+  signNote: (token: string, id: string) =>
+    request<{ note: CareNote }>(`/api/notes/${id}/sign`, { method: 'POST' }, token),
+
+  // ── Communications ─────────────────────────────────────────────────────────
+  listCommunications: (token: string, params?: { patientId?: string }) => {
+    const qs = params?.patientId ? `?patientId=${params.patientId}` : '';
+    return request<{ logs: CommLog[] }>(`/api/communications${qs}`, { method: 'GET' }, token);
+  },
+  createCommunication: (token: string, log: {
+    patient_id: string; comm_type?: string; direction?: string;
+    duration_seconds?: number; summary?: string; occurred_at?: string; program?: string;
+  }) => request<{ log: CommLog }>('/api/communications', { method: 'POST', body: JSON.stringify(log) }, token),
+
+  // ── Devices ────────────────────────────────────────────────────────────────
+  listDevices: (token: string) =>
+    request<{ devices: UnifiedDevice[]; count: number; cached: boolean }>('/api/devices', { method: 'GET' }, token),
+  listDeviceOrders: (token: string) =>
+    request<{ orders: UnifiedOrder[]; count: number; cached: boolean }>('/api/devices/orders', { method: 'GET' }, token),
 };
