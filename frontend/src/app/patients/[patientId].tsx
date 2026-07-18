@@ -2012,7 +2012,7 @@ function DevicesTab({ patient, colors, token }: { patient: Patient; colors: any;
             <Text style={[dv.hint, { color: colors.textSecondary }]}>No physical devices tracked yet</Text>
             <Text style={[dv.hint2, { color: colors.textSecondary }]}>
               {patient.source === 'smartmeter'
-                ? 'The patient may have a device already sending readings. Tap "Detect from Orders" to find the IMEI automatically, or tap "Assign Device" to enter it manually.'
+                ? 'No readings found for this patient yet. Once readings arrive the device will appear automatically.'
                 : 'Tap "Assign Device" and enter the IMEI from the device packaging.'}
             </Text>
           </View>
@@ -2028,13 +2028,24 @@ function DevicesTab({ patient, colors, token }: { patient: Patient; colors: any;
                   <Text style={[dv.name, { color: colors.text }]}>
                     {device.device_name ?? device.device_model ?? `${device.vendor} Device`}
                   </Text>
-                  <Text style={[dv.imeiText, { color: colors.text }]}>IMEI: {device.imei}</Text>
+                  {device.notes === 'IMEI_UNKNOWN' ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Text style={[dv.imeiText, { color: colors.warning }]}>IMEI: Not recorded</Text>
+                    </View>
+                  ) : (
+                    <Text style={[dv.imeiText, { color: colors.text }]}>IMEI: {device.imei}</Text>
+                  )}
                   {device.device_model && (
                     <Text style={[dv.sub, { color: colors.textSecondary }]}>Model: {device.device_model}</Text>
                   )}
                   <Text style={[dv.sub, { color: colors.textSecondary }]}>
                     {device.vendor} · Assigned {fmtDate(device.assigned_at)}
                   </Text>
+                  {device.notes === 'IMEI_UNKNOWN' && (
+                    <Text style={[dv.sub, { color: colors.warning }]}>
+                      To reassign: remove here, then assign to new patient by IMEI
+                    </Text>
+                  )}
                 </View>
                 <Pressable
                   onPress={() => setConfirmRemove(device)}

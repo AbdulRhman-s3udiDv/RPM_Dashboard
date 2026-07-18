@@ -886,6 +886,39 @@ export async function getSmartMeterReadingsForPatient(
   }
 }
 
+/**
+ * Like getSmartMeterReadingsForPatient but includes readings even when device_id is null.
+ * Returns one entry per unique reading_type, keeping the latest reading date.
+ * Used as a final fallback so every patient with readings gets a device entry.
+ */
+export async function getSmartMeterReadingTypesForPatient(
+  apiKey:      string,
+  smPatientId: number | string,
+  days:        number = 365,
+): Promise<{ readingType: string; lastReading: string }[]> {
+  const end   = new Date();
+  const start = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const fmt   = (d: Date) => d.toISOString().split("T")[0];
+  try {
+    const resp = await smPost<ReadingsResp>(apiKey, "/api/readings", {
+      date_start: fmt(start),
+      date_end:   fmt(end),
+      patient_id: Number(smPatientId),
+    });
+    const typeMap = new Map<string, string>(); // readingType → lastReading
+    for (const r of resp.data ?? []) {
+      const type = r.reading_type ?? "unknown";
+      const date = r.date_recorded ?? "";
+      if (!typeMap.has(type) || date > (typeMap.get(type) ?? "")) {
+        typeMap.set(type, date);
+      }
+    }
+    return [...typeMap.entries()].map(([readingType, lastReading]) => ({ readingType, lastReading }));
+  } catch {
+    return [];
+  }
+}
+
 /** Returns the raw number of readings for a patient in a date range (no deduplication). */
 export async function countSmartMeterReadingsForPatient(
   apiKey:      string,

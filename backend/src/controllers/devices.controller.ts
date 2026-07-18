@@ -8,7 +8,7 @@ import {
 import {
   getSmartMeterOrders, getSmartMeterSkus, createSmartMeterOrder,
   getSmartMeterActiveDevices, getSmartMeterDevicesForPatient,
-  getSmartMeterReadingsForPatient,
+  getSmartMeterReadingsForPatient, getSmartMeterReadingTypesForPatient,
   type SmartMeterSku,
 } from "../services/smartmeter";
 
@@ -637,6 +637,37 @@ export async function getPatientDevices(req: Request, res: Response): Promise<vo
           }
         } catch (e) {
           console.warn("[devices] orders fallback failed:", e);
+        }
+      }
+
+      // Step 4: Final fallback — if STILL no devices, the patient has readings but
+      // SmartMeter returns no device_id or IMEI. Create synthetic entries per reading type
+      // so the device always appears and can be removed/reassigned.
+      const stillNone = (
+        await supabaseAdmin.from("patient_devices").select("id", { count: "exact" })
+          .eq("patient_id", patientId).is("unassigned_at", null)
+      ).count === 0;
+
+      if (stillNone) {
+        try {
+          const readingTypes = await getSmartMeterReadingTypesForPatient(apiKey, smPatientId, 365);
+          for (const rt of readingTypes) {
+            const syntheticImei = `SM-${smPatientId}-${rt.readingType}`;
+            if (activeImeis.has(syntheticImei)) continue;
+            const { error: insertErr } = await supabaseAdmin.from("patient_devices").insert({
+              patient_id:   patientId,
+              imei:         syntheticImei,
+              device_name:  readingTypeToDeviceType(rt.readingType),
+              device_model: null,
+              vendor:       "SmartMeter",
+              notes:        "IMEI_UNKNOWN",
+              assigned_at:  rt.lastReading || new Date().toISOString(),
+            });
+            if (!insertErr) activeImeis.add(syntheticImei);
+            else console.warn("[devices] synthetic insert failed:", insertErr.message);
+          }
+        } catch (e) {
+          console.warn("[devices] synthetic fallback failed:", e);
         }
       }
     }
