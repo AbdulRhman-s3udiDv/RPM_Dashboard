@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { list, getOne, enroll, remove, getSystemClinics, getReadings, getPatientAlerts, getReviewTime, deleteReviewTime, logManualReview, logProfileView } from "../controllers/patients.controller";
+import { list, getOne, enroll, remove, patchProfile, getSystemClinics, getReadings, getPatientAlerts, getReviewTime, deleteReviewTime, logManualReview, logProfileView } from "../controllers/patients.controller";
 import { requireAuth, requireRole } from "../middleware/auth.middleware";
 
 export const patientsRouter = Router();
@@ -28,6 +28,12 @@ patientsRouter.get(
   requireAuth,
   requireRole("super_admin", "clinic_admin", "staff"),
   getOne,
+);
+patientsRouter.patch(
+  "/:id/profile",
+  requireAuth,
+  requireRole("super_admin", "clinic_admin", "staff"),
+  patchProfile,
 );
 patientsRouter.delete(
   "/:id",

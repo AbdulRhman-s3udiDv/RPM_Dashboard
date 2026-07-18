@@ -47,10 +47,10 @@ function fmtDateTime(iso: string | null): string {
   });
 }
 
-function fmtAddress(addr: SmartMeterAddress | null | undefined): string {
-  if (!addr) return '—';
+function fmtAddress(addr: SmartMeterAddress | null | undefined): string | null {
+  if (!addr) return null;
   const parts = [addr.address1, addr.address2, addr.city, addr.state, addr.zip, addr.country].filter(Boolean);
-  return parts.length ? parts.join(', ') : '—';
+  return parts.length ? parts.join(', ') : null;
 }
 
 function timeAgo(iso: string | null): string {
@@ -115,6 +115,25 @@ function InfoRow({ label, value, colors }: { label: string; value: string; color
     <View style={s.infoItem}>
       <Text style={[s.infoLabel, { color: colors.textSecondary }]}>{label}</Text>
       <Text style={[s.infoValue, { color: colors.text }]} numberOfLines={2}>{value || '—'}</Text>
+    </View>
+  );
+}
+
+function EditableInfoRow({
+  label, value, fieldKey, onEdit, colors,
+}: {
+  label: string; value: string | null; fieldKey: string;
+  onEdit: (key: string, label: string, current: string) => void; colors: any;
+}) {
+  return (
+    <View style={s.infoItem}>
+      <Text style={[s.infoLabel, { color: colors.textSecondary }]}>{label}</Text>
+      <Pressable onPress={() => onEdit(fieldKey, label, value ?? '')} hitSlop={8}>
+        {value
+          ? <Text style={[s.infoValue, { color: colors.text }]} numberOfLines={2}>{value}</Text>
+          : <Text style={[s.infoValue, { color: colors.primary, fontWeight: '600' }]}>Add</Text>
+        }
+      </Pressable>
     </View>
   );
 }
@@ -2221,6 +2240,10 @@ export default function PatientDetail() {
   const [smDetail, setSmDetail] = useState<SmartMeterDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [profileExtras, setProfileExtras] = useState<Record<string, string>>({});
+  const [editField, setEditField] = useState<{ key: string; label: string; current: string } | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [saving, setSaving] = useState(false);
   const [clinicReviewMode, setClinicReviewMode] = useState<'automatic' | 'manual' | null>(null);
   const [liveSeconds, setLiveSeconds] = useState(0);
   const [timerCancelled, setTimerCancelled] = useState(false);
@@ -2274,6 +2297,23 @@ export default function PatientDetail() {
     if (timerInterval.current) { clearInterval(timerInterval.current); timerInterval.current = null; }
   }
 
+  function openEdit(key: string, label: string, current: string) {
+    setEditField({ key, label, current });
+    setEditValue(current);
+  }
+
+  async function saveEdit() {
+    if (!editField || !session || !patientId) return;
+    setSaving(true);
+    try {
+      const result = await api.updatePatientProfile(session.token, patientId, { [editField.key]: editValue.trim() || null });
+      setPatient(result.patient);
+      setProfileExtras(result.patient.profile_extras ?? {});
+      setEditField(null);
+    } catch { /* silent */ }
+    finally { setSaving(false); }
+  }
+
   const loadPatient = useCallback(async (isRefresh = false) => {
     if (!session || !patientId) return;
     if (isRefresh) setRefreshing(true);
@@ -2281,6 +2321,7 @@ export default function PatientDetail() {
       const r = await api.getPatient(session.token, patientId);
       setPatient(r.patient);
       setSmDetail(r.smDetail ?? null);
+      setProfileExtras(r.patient.profile_extras ?? {});
     } catch { setPatient(null); }
     finally { setLoading(false); setRefreshing(false); }
   }, [session, patientId]);
@@ -2316,6 +2357,11 @@ export default function PatientDetail() {
 
   const nameParts = patient.full_name.trim().split(' ');
   const initials = ((nameParts[0]?.[0] ?? '') + (nameParts[nameParts.length - 1]?.[0] ?? '')).toUpperCase();
+
+  // Helper: smDetail field → profileExtras key → fallback
+  const ex = (key: string) => profileExtras[key] ?? null;
+  const resolve = (smVal: string | null | undefined, key: string, fallback?: string | null): string | null =>
+    (smVal ?? ex(key) ?? fallback ?? null) || null;
 
   // Prefer live SmartMeter detail over cached DB fields
   const dob     = smDetail?.dob     ?? patient.dob;
@@ -2476,28 +2522,16 @@ export default function PatientDetail() {
           <Card style={{ gap: 14 }}>
             <SectionLabel text="General" colors={colors} />
             <View style={s.infoGrid}>
-              {smDetail ? (
-                <>
-                  <InfoRow label="First Name"   value={smDetail.first_name ?? '—'}   colors={colors} />
-                  <InfoRow label="Middle Name"  value={smDetail.middle_name ?? '—'}  colors={colors} />
-                  <InfoRow label="Last Name"    value={smDetail.last_name ?? '—'}    colors={colors} />
-                  {smDetail.suffix && <InfoRow label="Suffix" value={smDetail.suffix} colors={colors} />}
-                  <InfoRow label="Gender"       value={smDetail.gender ?? '—'}       colors={colors} />
-                  <InfoRow label="Race"         value={smDetail.race ?? '—'}         colors={colors} />
-                  <InfoRow label="Date of Birth" value={smDetail.dob ?? '—'}         colors={colors} />
-                  <InfoRow label="Age"          value={ageFromDob(smDetail.dob)}     colors={colors} />
-                  <InfoRow label="Language"     value={smDetail.language ?? '—'}     colors={colors} />
-                  <InfoRow label="Time Zone"    value={smDetail.time_zone ?? '—'}    colors={colors} />
-                </>
-              ) : (
-                <>
-                  <InfoRow label="Full Name"  value={patient.full_name}           colors={colors} />
-                  <InfoRow label="DOB"        value={dob ?? '—'}                  colors={colors} />
-                  <InfoRow label="Age"        value={ageFromDob(dob)}             colors={colors} />
-                  <InfoRow label="Gender"     value={gender ?? '—'}               colors={colors} />
-                  <InfoRow label="Language"   value={language}                    colors={colors} />
-                </>
-              )}
+              <EditableInfoRow label="First Name"    fieldKey="first_name"   value={resolve(smDetail?.first_name, 'first_name')}   onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Middle Name"   fieldKey="middle_name"  value={resolve(smDetail?.middle_name, 'middle_name')}  onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Last Name"     fieldKey="last_name"    value={resolve(smDetail?.last_name, 'last_name')}      onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Suffix"        fieldKey="suffix"       value={resolve(smDetail?.suffix, 'suffix')}            onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Gender"        fieldKey="gender"       value={resolve(smDetail?.gender, 'gender', gender)}    onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Race"          fieldKey="race"         value={resolve(smDetail?.race, 'race')}                onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Date of Birth" fieldKey="dob"          value={resolve(smDetail?.dob, 'dob', patient.dob)}    onEdit={openEdit} colors={colors} />
+              <InfoRow label="Age" value={ageFromDob(resolve(smDetail?.dob, 'dob', patient.dob))} colors={colors} />
+              <EditableInfoRow label="Language"      fieldKey="language"     value={resolve(smDetail?.language, 'language', patient.language)} onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Time Zone"     fieldKey="time_zone"    value={resolve(smDetail?.time_zone, 'time_zone')}     onEdit={openEdit} colors={colors} />
             </View>
           </Card>
 
@@ -2505,41 +2539,43 @@ export default function PatientDetail() {
           <Card style={{ gap: 14 }}>
             <SectionLabel text="Contact" colors={colors} />
             <View style={s.infoGrid}>
-              {smDetail ? (
-                <>
-                  <InfoRow label="Cell Phone"  value={smDetail.cell_phone ?? '—'}  colors={colors} />
-                  <InfoRow label="Home Phone"  value={smDetail.home_phone ?? '—'}  colors={colors} />
-                  <InfoRow label="Email"       value={smDetail.email ?? '—'}       colors={colors} />
-                  <InfoRow label="Msg Delivery" value={smDetail.message_delivery_preference ?? '—'} colors={colors} />
-                  {smDetail.preferred_phone && <InfoRow label="Preferred Phone" value={smDetail.preferred_phone} colors={colors} />}
-                  {smDetail.preferred_time_of_day && <InfoRow label="Preferred Time" value={smDetail.preferred_time_of_day} colors={colors} />}
-                  {smDetail.preferred_day_of_week && <InfoRow label="Preferred Day"  value={smDetail.preferred_day_of_week}  colors={colors} />}
-                </>
-              ) : (
-                <InfoRow label="Phone" value={patient.phone ?? '—'} colors={colors} />
-              )}
+              <EditableInfoRow label="Cell Phone"     fieldKey="cell_phone"      value={resolve(smDetail?.cell_phone, 'cell_phone', patient.phone)}          onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Home Phone"     fieldKey="home_phone"      value={resolve(smDetail?.home_phone, 'home_phone')}                          onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Email"          fieldKey="email"           value={resolve(smDetail?.email, 'email')}                                    onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Msg Delivery"   fieldKey="msg_delivery"    value={resolve(smDetail?.message_delivery_preference, 'msg_delivery')}       onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Preferred Phone" fieldKey="preferred_phone" value={resolve(smDetail?.preferred_phone, 'preferred_phone')}               onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Preferred Time"  fieldKey="preferred_time"  value={resolve(smDetail?.preferred_time_of_day, 'preferred_time')}          onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Preferred Day"   fieldKey="preferred_day"   value={resolve(smDetail?.preferred_day_of_week, 'preferred_day')}           onEdit={openEdit} colors={colors} />
             </View>
+          </Card>
 
-            {smDetail && (smDetail.shipping_address || smDetail.physical_address) && (
-              <>
-                <View style={[s.divider, { backgroundColor: colors.border }]} />
-                <SectionLabel text="Address" colors={colors} />
-                <View style={{ gap: 10 }}>
-                  {smDetail.shipping_address && (
-                    <View>
-                      <Text style={[s.infoLabel, { color: colors.textSecondary, marginBottom: 2 }]}>SHIPPING</Text>
-                      <Text style={[s.infoValue, { color: colors.text }]}>{fmtAddress(smDetail.shipping_address)}</Text>
-                    </View>
-                  )}
-                  {smDetail.physical_address && (
-                    <View>
-                      <Text style={[s.infoLabel, { color: colors.textSecondary, marginBottom: 2 }]}>PHYSICAL</Text>
-                      <Text style={[s.infoValue, { color: colors.text }]}>{fmtAddress(smDetail.physical_address)}</Text>
-                    </View>
-                  )}
-                </View>
-              </>
-            )}
+          {/* Address */}
+          <Card style={{ gap: 14 }}>
+            <SectionLabel text="Address" colors={colors} />
+            <View style={{ gap: 12 }}>
+              <View>
+                <Text style={[s.infoLabel, { color: colors.textSecondary, marginBottom: 4 }]}>SHIPPING</Text>
+                {(() => {
+                  const val = fmtAddress(smDetail?.shipping_address) ?? ex('shipping_address');
+                  return val
+                    ? <Text style={[s.infoValue, { color: colors.text }]}>{val}</Text>
+                    : <Pressable onPress={() => openEdit('shipping_address', 'Shipping Address', '')} hitSlop={8}>
+                        <Text style={[s.infoValue, { color: colors.primary, fontWeight: '600' }]}>Add</Text>
+                      </Pressable>;
+                })()}
+              </View>
+              <View>
+                <Text style={[s.infoLabel, { color: colors.textSecondary, marginBottom: 4 }]}>PHYSICAL</Text>
+                {(() => {
+                  const val = fmtAddress(smDetail?.physical_address) ?? ex('physical_address');
+                  return val
+                    ? <Text style={[s.infoValue, { color: colors.text }]}>{val}</Text>
+                    : <Pressable onPress={() => openEdit('physical_address', 'Physical Address', '')} hitSlop={8}>
+                        <Text style={[s.infoValue, { color: colors.primary, fontWeight: '600' }]}>Add</Text>
+                      </Pressable>;
+                })()}
+              </View>
+            </View>
           </Card>
 
           {/* Enrollment */}
@@ -2560,15 +2596,13 @@ export default function PatientDetail() {
           </Card>
 
           {/* Insurance */}
-          {patient.insurance_payer && (
-            <Card style={{ gap: 14 }}>
-              <SectionLabel text="Insurance" colors={colors} />
-              <View style={s.infoGrid}>
-                <InfoRow label="Payer"  value={patient.insurance_payer}        colors={colors} />
-                <InfoRow label="Class"  value={patient.insurance_class ?? '—'} colors={colors} />
-              </View>
-            </Card>
-          )}
+          <Card style={{ gap: 14 }}>
+            <SectionLabel text="Insurance" colors={colors} />
+            <View style={s.infoGrid}>
+              <EditableInfoRow label="Payer" fieldKey="insurance_payer" value={patient.insurance_payer ?? ex('insurance_payer')} onEdit={openEdit} colors={colors} />
+              <EditableInfoRow label="Class" fieldKey="insurance_class" value={patient.insurance_class ?? ex('insurance_class')} onEdit={openEdit} colors={colors} />
+            </View>
+          </Card>
 
           {/* Diagnoses */}
           {(patient.diagnoses.length > 0 || patient.icd10_codes.length > 0) && (
@@ -2592,6 +2626,42 @@ export default function PatientDetail() {
               )}
             </Card>
           )}
+
+          {/* Field Edit Modal */}
+          <Modal visible={!!editField} transparent animationType="fade" onRequestClose={() => setEditField(null)}>
+            <View style={{ flex: 1, backgroundColor: '#00000060', justifyContent: 'center', padding: 24 }}>
+              <View style={[{ borderRadius: 16, padding: 20, gap: 14 }, { backgroundColor: colors.card }]}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.5 }}>
+                  {(editField?.label ?? '').toUpperCase()}
+                </Text>
+                <TextInput
+                  value={editValue}
+                  onChangeText={setEditValue}
+                  placeholder={`Enter ${editField?.label ?? ''}`}
+                  placeholderTextColor={colors.textSecondary + '80'}
+                  style={[{ borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
+                  autoFocus
+                  multiline={editField?.key === 'shipping_address' || editField?.key === 'physical_address'}
+                />
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                  <Pressable
+                    onPress={() => setEditField(null)}
+                    style={[{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, alignItems: 'center', borderColor: colors.border }]}>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.textSecondary }}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={saveEdit}
+                    disabled={saving}
+                    style={[{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: saving ? colors.primary + '80' : colors.primary }]}>
+                    {saving
+                      ? <ActivityIndicator color="#fff" size="small" />
+                      : <Text style={{ fontSize: 14, fontWeight: '700', color: '#052B00' }}>Save</Text>
+                    }
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </Modal>
         </View>
       )}
 

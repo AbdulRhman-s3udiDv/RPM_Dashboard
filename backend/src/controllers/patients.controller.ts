@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { supabaseAdmin, supabaseAnon } from "../lib/supabase";
 import { findProfileById } from "../models/profile";
-import { listPatients, findPatientById, createPatient, deletePatient } from "../models/patient";
+import { listPatients, findPatientById, createPatient, deletePatient, updatePatientProfileExtras } from "../models/patient";
 import { enrollTenoviPatient, getTenoviFacilities, getRpmToken } from "../services/tenovi";
 import {
   enrollSmartMeterPatient,
@@ -246,6 +246,21 @@ export async function enroll(req: Request, res: Response) {
   });
 
   return res.status(201).json({ patient });
+}
+
+// ── Patch patient profile extras ───────────────────────────────────────────
+
+export async function patchProfile(req: Request, res: Response) {
+  const { id } = req.params;
+  const profile = await findProfileById(req.auth!.sub);
+  const patient = await findPatientById(id);
+  if (!patient) return res.status(404).json({ error: "Patient not found." });
+  if (profile && profile.role !== "super_admin" && patient.clinic_id !== profile.clinic_id) {
+    return res.status(403).json({ error: "Access denied." });
+  }
+  const extras = req.body as Record<string, string | null>;
+  const updated = await updatePatientProfileExtras(id, extras);
+  return res.json({ patient: updated });
 }
 
 // ── Delete patient ─────────────────────────────────────────────────────────

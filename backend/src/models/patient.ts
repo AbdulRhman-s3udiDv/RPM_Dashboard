@@ -30,6 +30,7 @@ export type PatientRecord = {
   disenrolled_at: string | null;
   created_at: string;
   updated_at: string;
+  profile_extras: Record<string, string>;
 };
 
 export type PatientInput = {
@@ -75,7 +76,32 @@ function mapRow(r: any): PatientRecord {
     disenrolled_at:      r.disenrolled_at ?? null,
     created_at:          r.created_at,
     updated_at:          r.updated_at,
+    profile_extras:      r.profile_extras ?? {},
   };
+}
+
+export async function updatePatientProfileExtras(
+  id: string,
+  extras: Record<string, string | null>,
+): Promise<PatientRecord> {
+  const { data: current } = await supabaseAdmin
+    .from("patients")
+    .select("profile_extras")
+    .eq("id", id)
+    .single();
+  const merged: Record<string, string> = { ...(current?.profile_extras ?? {}) };
+  for (const [k, v] of Object.entries(extras)) {
+    if (v === null || v === "") delete merged[k];
+    else merged[k] = v;
+  }
+  const { data, error } = await supabaseAdmin
+    .from("patients")
+    .update({ profile_extras: merged })
+    .eq("id", id)
+    .select(SELECT)
+    .single();
+  if (error) throw error;
+  return mapRow(data);
 }
 
 export async function listPatients(filter: {

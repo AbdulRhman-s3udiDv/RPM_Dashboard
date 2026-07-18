@@ -192,6 +192,7 @@ export type Patient = {
   disenrolled_at: string | null;
   created_at: string;
   updated_at: string;
+  profile_extras: Record<string, string>;
 };
 
 export type ReadingType =
@@ -692,6 +693,8 @@ export const api = {
   },
   getPatient: (token: string, id: string) =>
     request<{ patient: Patient; smDetail?: SmartMeterDetail | null }>(`/api/patients/${id}`, { method: 'GET' }, token),
+  updatePatientProfile: (token: string, patientId: string, extras: Record<string, string | null>) =>
+    request<{ patient: Patient }>(`/api/patients/${patientId}/profile`, { method: 'PATCH', body: JSON.stringify(extras) }, token),
   enrollPatient: (token: string, data: EnrollPatientInput) =>
     request<{ patient: Patient; warning?: string }>(
       '/api/patients/enroll',

@@ -559,7 +559,7 @@ function PatientCard({
           <View style={{ flex: 1, gap: 2 }}>
             <Text style={[cd.name, { color: colors.text }]}>{patient.full_name}</Text>
             <Text style={[cd.meta, { color: colors.textSecondary }]}>
-              {ageFromDob(patient.dob)} · {patient.sex === 'M' ? 'Male' : patient.sex === 'F' ? 'Female' : '—'}
+              {patient.sex === 'M' ? 'Male' : patient.sex === 'F' ? 'Female' : 'Unknown'} · {patient.enrollment_status}
             </Text>
             <Text style={[cd.meta, { color: colors.textSecondary }]} numberOfLines={1}>
               {patient.clinic_name ?? 'Unknown clinic'}
