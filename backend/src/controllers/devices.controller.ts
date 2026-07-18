@@ -589,35 +589,54 @@ export async function getPatientDevices(req: Request, res: Response): Promise<vo
     const apiKey: string | undefined = clinicRow?.smartmeter_api_key;
 
     if (apiKey) {
-      const readingDevices = await getSmartMeterReadingsForPatient(
-        apiKey,
-        (patient as any).external_patient_id as string,
-        365,
-      );
+      const smPatientId = (patient as any).external_patient_id as string;
 
-      if (readingDevices.length > 0) {
-        // Load currently active imeis to avoid duplicate inserts
-        const { data: activeRows } = await supabaseAdmin
-          .from("patient_devices")
-          .select("imei")
-          .eq("patient_id", patientId)
-          .is("unassigned_at", null);
-        const activeImeis = new Set((activeRows ?? []).map((r: any) => r.imei as string));
+      // Step 1: Load currently active imeis once (shared by both sync paths)
+      const { data: activeRows } = await supabaseAdmin
+        .from("patient_devices")
+        .select("imei")
+        .eq("patient_id", patientId)
+        .is("unassigned_at", null);
+      const activeImeis = new Set((activeRows ?? []).map((r: any) => r.imei as string));
 
-        for (const d of readingDevices) {
-          if (activeImeis.has(d.deviceId)) continue;
-          const { error: insertErr } = await supabaseAdmin.from("patient_devices").insert({
-            patient_id:   patientId,
-            imei:         d.deviceId,
-            device_name:  readingTypeToDeviceType(d.readingType),
-            device_model: null,
-            vendor:       "SmartMeter",
-            notes:        "Auto-synced from readings",
-            assigned_at:  d.lastReading || new Date().toISOString(),
-          });
-          if (insertErr) {
-            console.warn("[devices] auto-sync insert failed:", insertErr.message);
+      // Step 2: Try readings-based sync (device_id from /api/readings)
+      const readingDevices = await getSmartMeterReadingsForPatient(apiKey, smPatientId, 365);
+      for (const d of readingDevices) {
+        if (activeImeis.has(d.deviceId)) continue;
+        const { error: insertErr } = await supabaseAdmin.from("patient_devices").insert({
+          patient_id:   patientId,
+          imei:         d.deviceId,
+          device_name:  readingTypeToDeviceType(d.readingType),
+          device_model: null,
+          vendor:       "SmartMeter",
+          notes:        "Auto-synced from readings",
+          assigned_at:  d.lastReading || new Date().toISOString(),
+        });
+        if (!insertErr) activeImeis.add(d.deviceId);
+        else console.warn("[devices] readings auto-sync insert failed:", insertErr.message);
+      }
+
+      // Step 3: Fallback — if readings gave us nothing, try orders-based IMEI detection.
+      // Many clinics ship devices directly without recording device_id in readings.
+      if (readingDevices.length === 0) {
+        try {
+          const fromOrders = await getSmartMeterDevicesForPatient(apiKey, smPatientId, 365);
+          for (const d of fromOrders) {
+            if (activeImeis.has(d.imei)) continue;
+            const { error: insertErr } = await supabaseAdmin.from("patient_devices").insert({
+              patient_id:   patientId,
+              imei:         d.imei,
+              device_name:  d.deviceName ?? d.deviceModel ?? "SmartMeter Device",
+              device_model: d.deviceModel ?? null,
+              vendor:       "SmartMeter",
+              notes:        "Auto-synced from orders",
+              assigned_at:  d.orderedAt || new Date().toISOString(),
+            });
+            if (!insertErr) activeImeis.add(d.imei);
+            else console.warn("[devices] orders auto-sync insert failed:", insertErr.message);
           }
+        } catch (e) {
+          console.warn("[devices] orders fallback failed:", e);
         }
       }
     }

@@ -1894,25 +1894,20 @@ function DevicesTab({ patient, colors, token }: { patient: Patient; colors: any;
 
   return (
     <>
-      {/* Monitoring system info card */}
+      {/* Program enrollment card */}
       <Card style={{ gap: 10 }}>
-        <SectionLabel text="Monitoring System" colors={colors} />
+        <SectionLabel text="Program Enrollment" colors={colors} />
         <View style={[dv.row, { borderColor: colors.border }]}>
           <View style={[dv.iconWrap, { backgroundColor: colors.primary + '15' }]}>
             <HeartPulse size={18} color={colors.primary} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[dv.name, { color: colors.text }]}>
-              {patient.source === 'tenovi' ? 'Tenovi RPM Device' : 'SmartMeter Device'}
+              {patient.source === 'tenovi' ? 'Tenovi' : 'SmartMeter'} — {patient.program} Program
             </Text>
             <Text style={[dv.sub, { color: colors.textSecondary }]}>
-              Program: {patient.program} · {patient.source === 'tenovi' ? 'Tenovi' : 'SmartMeter'}
+              Monitoring platform · Patient ID {patient.external_patient_id}
             </Text>
-            {patient.external_patient_id && (
-              <Text style={[dv.sub, { color: colors.textSecondary }]}>
-                Patient ID: {patient.external_patient_id}
-              </Text>
-            )}
           </View>
           <StatusPill tone={patient.enrollment_status === 'active' ? 'success' : 'muted'}>
             {patient.enrollment_status}
@@ -2014,11 +2009,11 @@ function DevicesTab({ patient, colors, token }: { patient: Patient; colors: any;
         ) : devices.length === 0 ? (
           <View style={dv.center}>
             <Link2Off size={24} color={colors.textSecondary} strokeWidth={1.5} />
-            <Text style={[dv.hint, { color: colors.textSecondary }]}>No devices assigned to this patient</Text>
+            <Text style={[dv.hint, { color: colors.textSecondary }]}>No physical devices tracked yet</Text>
             <Text style={[dv.hint2, { color: colors.textSecondary }]}>
               {patient.source === 'smartmeter'
-                ? 'Tap "Detect from Orders" to find existing devices, or "Assign Device" to add by IMEI'
-                : 'Tap "Assign Device" and enter the IMEI from the device packaging'}
+                ? 'The patient may have a device already sending readings. Tap "Detect from Orders" to find the IMEI automatically, or tap "Assign Device" to enter it manually.'
+                : 'Tap "Assign Device" and enter the IMEI from the device packaging.'}
             </Text>
           </View>
         ) : (
