@@ -7,6 +7,16 @@ services:
       - .env
     ports:
       - "${PORT:-4000}:${PORT:-4000}"
+    networks:
+      - default
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.rpmcares-backend.rule=Host(`${API_DOMAIN:-api.rpmcares.com}`)
+      - traefik.http.routers.rpmcares-backend.entrypoints=web,websecure
+      - traefik.http.routers.rpmcares-backend.tls=true
+      - traefik.http.routers.rpmcares-backend.tls.certresolver=mytlschallenge
+      - traefik.http.services.rpmcares-backend.loadbalancer.server.port=${PORT:-4000}
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:'+(process.env.PORT||4000)+'/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
@@ -18,3 +28,8 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+networks:
+  traefik:
+    name: n8n_default
+    external: true
