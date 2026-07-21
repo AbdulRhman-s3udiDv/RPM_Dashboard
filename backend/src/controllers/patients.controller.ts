@@ -281,6 +281,8 @@ export async function enroll(req: Request, res: Response) {
       const msg = err instanceof Error ? err.message : String(err);
       return res.status(422).json({ error: `SmartMeter enrollment failed: ${msg}` });
     }
+  } else {
+    return res.status(400).json({ error: "system must be 'tenovi', 'smartmeter', or 'local'." });
   }
 
   const patient = await createPatient({
