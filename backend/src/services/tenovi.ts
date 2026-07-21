@@ -513,7 +513,7 @@ export async function getTenoviHwiMeasurements(
     `?timestamp__gte=${encodeURIComponent(start)}&timestamp__lt=${encodeURIComponent(end)}&page_size=100`;
 
   while (url) {
-    const page = await hwiGetFull<HwiMeasurementsPage>(url);
+    const page: HwiMeasurementsPage = await hwiGetFull<HwiMeasurementsPage>(url);
     all.push(...(page.results ?? []));
     url = page.next ?? null;
   }
