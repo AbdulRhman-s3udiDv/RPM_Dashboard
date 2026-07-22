@@ -19,7 +19,7 @@ const inviteSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1),
   role: z.enum(["clinic_admin", "staff", "super_admin"]),
-  clinicId: z.string().uuid().optional(),
+  clinicId: z.string().uuid().nullish(),
 });
 
 export async function inviteMember(req: Request, res: Response) {
