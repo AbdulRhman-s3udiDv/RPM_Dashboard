@@ -651,7 +651,7 @@ export const api = {
   },
   inviteMember: (
     token: string,
-    payload: { email: string; name: string; role: 'clinic_admin' | 'staff'; clinicId: string },
+    payload: { email: string; name: string; role: 'clinic_admin' | 'staff' | 'super_admin'; clinicId: string | null },
   ) =>
     request<{ ok: true; emailSent: boolean; emailError?: string; inviteLink: string | null; email: string }>(
       '/api/admin/members/invite',
